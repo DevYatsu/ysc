@@ -512,35 +512,31 @@ impl<'source> Parser<'source> {
     }
 
     fn is_assignment(&self) -> bool {
-        let mut p = self.stream.pos;
-        if p >= self.stream.tokens.len() {
-            return false;
-        }
-        if !matches!(self.stream.tokens[p].token, Token::Identifier(_)) {
-            return false;
-        }
-        p += 1;
-        while p < self.stream.tokens.len() {
-            match self.stream.tokens[p].token {
+        let tokens = &self.stream.tokens;
+        let mut p = self.stream.pos + 1;
+        while let Some(td) = tokens.get(p) {
+            match td.token {
                 Token::LBracket => {
+                    // Find matching RBracket
                     let mut depth = 1;
                     p += 1;
-                    while p < self.stream.tokens.len() && depth > 0 {
-                        match self.stream.tokens[p].token {
+                    while let Some(td) = tokens.get(p) {
+                        match td.token {
                             Token::LBracket => depth += 1,
                             Token::RBracket => depth -= 1,
                             _ => {}
                         }
                         p += 1;
+                        if depth == 0 {
+                            break;
+                        }
                     }
                 }
                 Token::Dot => {
                     p += 1;
-                    if p < self.stream.tokens.len() && matches!(self.stream.tokens[p].token, Token::Identifier(_))
-                    {
-                        p += 1;
-                    } else {
-                        return false;
+                    match tokens.get(p).map(|td| &td.token) {
+                        Some(Token::Identifier(_)) => p += 1,
+                        _ => return false,
                     }
                 }
                 Token::Colon => return true,
