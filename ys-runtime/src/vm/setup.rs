@@ -47,9 +47,7 @@ pub async fn run_interpreter(program: Program) -> Result<(), JitError> {
 
     // 3. Initialize the shared context.
     let ctx = Arc::new(Context {
-        globals: program
-            .globals_count
-            .iter_registers()
+        globals: (0..program.globals_count)
             .map(|_| std::sync::atomic::AtomicU64::new(0))
             .collect::<Vec<_>>()
             .into(),
@@ -96,12 +94,3 @@ pub async fn run_interpreter(program: Program) -> Result<(), JitError> {
     Ok(())
 }
 
-trait IterExt {
-    fn iter_registers(self) -> std::ops::Range<usize>;
-}
-
-impl IterExt for usize {
-    fn iter_registers(self) -> std::ops::Range<usize> {
-        0..self
-    }
-}
