@@ -3,6 +3,7 @@ use crate::{
     error::JitError,
     lexer::Token,
     template::{split_template_parts, TemplatePart},
+    unescape::unescape_string,
     token_stream::{TokenStream, VarInfo},
 };
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -174,7 +175,7 @@ impl<'source> Parser<'source> {
                 Ok(r)
             }
             Token::String(s) => {
-                let unescaped = crate::unescape::unescape_string(s);
+                let unescaped = unescape_string(s);
                 let val = Value::sso(&unescaped)
                     .unwrap_or_else(|| Value::object(self.intern(&unescaped)));
                 let r = self.alloc_reg();
@@ -1074,7 +1075,7 @@ impl<'source> Parser<'source> {
         for part in parts {
             let part_reg = match part {
                 TemplatePart::Literal(lit) => {
-                    let unescaped = crate::unescape::unescape_string(lit);
+                    let unescaped = unescape_string(lit);
                     let val = Value::sso(&unescaped)
                         .unwrap_or_else(|| Value::object(self.intern(&unescaped)));
                     let r = self.alloc_reg();
