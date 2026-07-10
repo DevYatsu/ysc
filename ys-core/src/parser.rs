@@ -1,5 +1,5 @@
 use crate::{
-    compiler::{Instruction, Program, UserFunction, Value},
+    compiler::{CallData, CallDynamicData, Instruction, Program, UserFunction, Value},
     error::JitError,
     lexer::Token,
     template::{split_template_parts, TemplatePart},
@@ -95,6 +95,36 @@ impl<'source> Parser<'source> {
         let r = self.next_reg;
         self.next_reg += 1;
         r
+    }
+
+    fn emit_call(
+        &mut self,
+        name_id: u32,
+        args: Vec<usize>,
+        dst: Option<usize>,
+        instructions: &mut Vec<Instruction>,
+    ) {
+        instructions.push(Instruction::Call(Box::new(CallData {
+            name_id,
+            args_regs: Arc::from(args),
+            dst,
+            loc: self.stream.loc(),
+        })));
+    }
+
+    fn emit_call_dynamic(
+        &mut self,
+        callee_reg: usize,
+        args: Vec<usize>,
+        dst: Option<usize>,
+        instructions: &mut Vec<Instruction>,
+    ) {
+        instructions.push(Instruction::CallDynamic(Box::new(CallDynamicData {
+            callee_reg,
+            args_regs: Arc::from(args),
+            dst,
+            loc: self.stream.loc(),
+        })));
     }
 
     fn parse_expr(&mut self, instructions: &mut Vec<Instruction>) -> Result<usize, JitError> {
@@ -193,22 +223,10 @@ impl<'source> Parser<'source> {
 
                     if let Some(info) = self.get_var(id) {
                         let callee_reg = self.load_var(info, instructions);
-                        instructions.push(Instruction::CallDynamic(Box::new(
-                            crate::compiler::CallDynamicData {
-                                callee_reg,
-                                args_regs: Arc::from(args),
-                                dst: Some(dst),
-                                loc: self.stream.loc(),
-                            },
-                        )));
+                        self.emit_call_dynamic(callee_reg, args, Some(dst), instructions);
                     } else {
                         let name_id = self.intern(id);
-                        instructions.push(Instruction::Call(Box::new(crate::compiler::CallData {
-                            name_id,
-                            args_regs: Arc::from(args),
-                            dst: Some(dst),
-                            loc: self.stream.loc(),
-                        })));
+                        self.emit_call(name_id, args, Some(dst), instructions);
                     }
                     Ok(dst)
                 } else if let Some(info) = self.get_var(id) {
@@ -561,22 +579,10 @@ impl<'source> Parser<'source> {
 
         if let Some(info) = self.get_var(id) {
             let callee_reg = self.load_var(info, instructions);
-            instructions.push(Instruction::CallDynamic(Box::new(
-                crate::compiler::CallDynamicData {
-                    callee_reg,
-                    args_regs: Arc::from(args),
-                    dst: None,
-                    loc: self.stream.loc(),
-                },
-            )));
+            self.emit_call_dynamic(callee_reg, args, None, instructions);
         } else {
             let name_id = self.intern(id);
-            instructions.push(Instruction::Call(Box::new(crate::compiler::CallData {
-                name_id,
-                args_regs: Arc::from(args),
-                dst: None,
-                loc: self.stream.loc(),
-            })));
+            self.emit_call(name_id, args, None, instructions);
         }
         Ok(())
     }
