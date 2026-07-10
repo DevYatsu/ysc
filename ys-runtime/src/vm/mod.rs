@@ -14,7 +14,7 @@
 pub mod setup;
 
 use crate::context::{Callable, Context, TaskRegisters};
-use crate::heap::ManagedObject;
+use crate::heap::{Generation, ManagedObject};
 use crate::value_ext::ValueExt;
 use parking_lot::Mutex;
 use std::pin::Pin;
@@ -22,7 +22,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::future::Future;
 use tokio::task::JoinSet;
-use ys_core::compiler::{Instruction, Value, QNAN};
+use ys_core::compiler::{Instruction, Loc, Value, QNAN};
 use ys_core::error::JitError;
 
 pub use setup::run_interpreter;
@@ -76,6 +76,231 @@ pub(crate) async fn drain_join_set(js: &mut JoinSet<Result<(), JitError>>) -> Re
     Ok(())
 }
 
+// ── Hot-path arithmetic macros ────────────────────────────────────────────
+
+macro_rules! numeric_bin {
+    ($regs:expr, $dst:expr, $l:expr, $r:expr, $op:tt, $loc:expr) => {{
+        let lb = unsafe { $regs.get_unchecked($l).load(Ordering::Relaxed) };
+        let rb = unsafe { $regs.get_unchecked($r).load(Ordering::Relaxed) };
+        if (lb & QNAN) != QNAN && (rb & QNAN) != QNAN {
+            store($regs, $dst, Value::number(f64::from_bits(lb) $op f64::from_bits(rb)));
+        } else if let (Some(lv), Some(rv)) = (Value::from_bits(lb).as_number(), Value::from_bits(rb).as_number()) {
+            store($regs, $dst, Value::number(lv $op rv));
+        } else {
+            return Err(JitError::runtime(
+                concat!("Math error: expected numbers for '", stringify!($op), "'"),
+                $loc.line as usize, $loc.col as usize,
+            ));
+        }
+    }};
+}
+
+macro_rules! compare_op {
+    ($regs:expr, $dst:expr, $l:expr, $r:expr, $op:tt, $loc:expr) => {{
+        let lb = unsafe { $regs.get_unchecked($l).load(Ordering::Relaxed) };
+        let rb = unsafe { $regs.get_unchecked($r).load(Ordering::Relaxed) };
+        let result = if (lb & QNAN) != QNAN && (rb & QNAN) != QNAN {
+            Some(f64::from_bits(lb) $op f64::from_bits(rb))
+        } else {
+            match (Value::from_bits(lb).as_number(), Value::from_bits(rb).as_number()) {
+                (Some(lv), Some(rv)) => Some(lv $op rv),
+                _ => None,
+            }
+        };
+        match result {
+            Some(b) => store($regs, $dst, Value::bool(b)),
+            None    => return Err(JitError::runtime(
+                concat!("Compare error: expected numbers for '", stringify!($op), "'"),
+                $loc.line as usize, $loc.col as usize,
+            )),
+        }
+    }};
+}
+
+macro_rules! atomic_inc {
+    ($ptr:expr) => {{
+        let mut old = $ptr.load(Ordering::Relaxed);
+        loop {
+            let next = if (old & QNAN) != QNAN {
+                Value::number(f64::from_bits(old) + 1.0)
+            } else if let Some(n) = Value::from_bits(old).as_number() {
+                Value::number(n + 1.0)
+            } else { break; };
+            match $ptr.compare_exchange_weak(old, next.to_bits(), Ordering::AcqRel, Ordering::Relaxed) {
+                Ok(_) => break,
+                Err(a) => old = a,
+            }
+        }
+    }};
+}
+
+#[inline(always)]
+fn eq_fast(ctx: &Context, lb: u64, rb: u64) -> bool {
+    if lb == rb && (lb & QNAN) != QNAN { true }
+    else { ctx.values_equal(Value::from_bits(lb), Value::from_bits(rb)) }
+}
+
+// ── GetResult for collection access ────────────────────────────────────────
+
+enum GetResult {
+    Value(Value),
+    BoundMethod(Value),
+    Error(String),
+}
+
+// ── Collection handlers ────────────────────────────────────────────────────
+
+fn handle_list_get(
+    regs: &[AtomicU64],
+    list: usize,
+    index_reg: usize,
+    ctx: &Context,
+    _loc: Loc,
+) -> GetResult {
+    let list_val  = load(regs, list);
+    let index_val = load(regs, index_reg);
+    let idx = match index_val.as_number() {
+        Some(n) => n as usize,
+        None => return GetResult::Error("List index must be a number".into()),
+    };
+
+    if let Some(oid) = list_val.as_obj_id() {
+        let heap = ctx.heap.objects.read();
+        if let Some(Some(obj)) = heap.get(oid as usize) {
+            return match &obj.obj {
+                ManagedObject::List(elems) => {
+                    let r = elems.read();
+                    if idx < r.len() {
+                        GetResult::Value(Value::from_bits(r[idx].load(Ordering::Relaxed)))
+                    } else {
+                        GetResult::Error(format!("List index {} out of bounds (len={})", idx, r.len()))
+                    }
+                }
+                ManagedObject::String(s) => {
+                    if idx < s.len() {
+                        let byte = s.as_bytes()[idx];
+                        GetResult::Value(Value::sso(&(byte as char).to_string()).unwrap_or(Value::from_bits(0)))
+                    } else {
+                        GetResult::Error(format!("String index {} out of bounds", idx))
+                    }
+                }
+                _ => GetResult::Error("Expected a list or string for index".into()),
+            };
+        }
+        GetResult::Error("Null object dereference".into())
+    } else if let Some(s) = ctx.value_as_string(list_val)
+        && idx < s.len()
+    {
+        let byte = s.as_bytes()[idx];
+        GetResult::Value(Value::sso(&(byte as char).to_string()).unwrap_or(Value::from_bits(0)))
+    } else {
+        GetResult::Error("Expected a list or string for index".into())
+    }
+}
+
+fn handle_list_set(
+    regs: &[AtomicU64],
+    list: usize,
+    index_reg: usize,
+    src: usize,
+    ctx: &Context,
+    _loc: Loc,
+) -> Result<(), String> {
+    let list_val  = load(regs, list);
+    let index_val = load(regs, index_reg);
+    let src_val   = load(regs, src);
+    let idx = index_val.as_number()
+        .ok_or_else(|| "List index must be a number".to_string())? as usize;
+    let oid = list_val.as_obj_id()
+        .ok_or_else(|| "Expected list for index assignment".to_string())?;
+    let heap = ctx.heap.objects.read();
+    let obj = heap.get(oid as usize).and_then(|o| o.as_ref())
+        .ok_or_else(|| "Expected list for index assignment".to_string())?;
+    let ManagedObject::List(elems) = &obj.obj else {
+        return Err("Expected list for index assignment".to_string());
+    };
+    let r = elems.read();
+    if idx < r.len() {
+        r[idx].store(src_val.to_bits(), Ordering::Relaxed);
+    } else {
+        drop(r);
+        let mut w = elems.write();
+        if idx >= w.len() { w.resize_with(idx + 1, || AtomicU64::new(0)); }
+        w[idx].store(src_val.to_bits(), Ordering::Relaxed);
+    }
+    Ok(())
+}
+
+fn handle_object_get(
+    regs: &[AtomicU64],
+    obj: usize,
+    name_id: u32,
+    ctx: &Context,
+    _loc: Loc,
+) -> GetResult {
+    let obj_val = load(regs, obj);
+    if let Some(oid) = obj_val.as_obj_id() {
+        let heap = ctx.heap.objects.read();
+        if let Some(Some(o)) = heap.get(oid as usize) {
+            return match &o.obj {
+                ManagedObject::Object(fields) => {
+                    let r = fields.read();
+                    if let Some(slot) = r.get(&name_id) {
+                        GetResult::Value(Value::from_bits(slot.load(Ordering::Relaxed)))
+                    } else {
+                        GetResult::BoundMethod(obj_val)
+                    }
+                }
+                _ => GetResult::BoundMethod(obj_val),
+            };
+        }
+        GetResult::Error("Null object dereference".into())
+    } else {
+        GetResult::Error("Expected object for property access".into())
+    }
+}
+
+fn handle_object_set(
+    regs: &[AtomicU64],
+    obj: usize,
+    name_id: u32,
+    src: usize,
+    ctx: &Context,
+    _loc: Loc,
+) -> Result<(), String> {
+    let obj_val = load(regs, obj);
+    let src_val = load(regs, src);
+    let oid = obj_val.as_obj_id()
+        .ok_or_else(|| "Expected object for property assignment".to_string())?;
+    let heap = ctx.heap.objects.read();
+    let o = heap.get(oid as usize).and_then(|s| s.as_ref())
+        .ok_or_else(|| "Expected object for property assignment".to_string())?;
+    let ManagedObject::Object(fields) = &o.obj else {
+        return Err("Expected object for property assignment".to_string());
+    };
+    {
+        let rf = fields.read();
+        if let Some(slot) = rf.get(&name_id) {
+            slot.store(src_val.to_bits(), Ordering::Relaxed);
+        } else {
+            drop(rf);
+            fields.write().insert(name_id, AtomicU64::new(src_val.to_bits()));
+        }
+    }
+
+    // Write barrier — track tenured → nursery pointers.
+    let src_bits = src_val.to_bits();
+    if o.generation == Generation::Tenured
+        && (src_bits & QNAN) == QNAN
+        && let Some(src_oid) = Value::from_bits(src_bits).as_obj_id()
+        && let Some(Some(src_obj)) = heap.get(src_oid as usize)
+        && src_obj.generation == Generation::Nursery
+    {
+        ctx.heap.metadata.lock().remembered_set.insert(oid);
+    }
+    Ok(())
+}
+
 // ── Call frame ────────────────────────────────────────────────────────────────
 
 struct ReturnTarget {
@@ -113,69 +338,6 @@ pub fn execute_bytecode<'a>(
             len
         };
         let _guard = RegGuard { task_roots: task_roots.clone(), initial_len: initial_root_len };
-
-        // ── Hot-path arithmetic macros ────────────────────────────────────
-        macro_rules! numeric_bin {
-            ($regs:expr, $dst:expr, $l:expr, $r:expr, $op:tt, $loc:expr) => {{
-                let lb = unsafe { $regs.get_unchecked($l).load(Ordering::Relaxed) };
-                let rb = unsafe { $regs.get_unchecked($r).load(Ordering::Relaxed) };
-                if (lb & QNAN) != QNAN && (rb & QNAN) != QNAN {
-                    store($regs, $dst, Value::number(f64::from_bits(lb) $op f64::from_bits(rb)));
-                } else if let (Some(lv), Some(rv)) = (Value::from_bits(lb).as_number(), Value::from_bits(rb).as_number()) {
-                    store($regs, $dst, Value::number(lv $op rv));
-                } else {
-                    return Err(JitError::runtime(
-                        concat!("Math error: expected numbers for '", stringify!($op), "'"),
-                        $loc.line as usize, $loc.col as usize,
-                    ));
-                }
-            }};
-        }
-
-        macro_rules! compare_op {
-            ($regs:expr, $dst:expr, $l:expr, $r:expr, $op:tt, $loc:expr) => {{
-                let lb = unsafe { $regs.get_unchecked($l).load(Ordering::Relaxed) };
-                let rb = unsafe { $regs.get_unchecked($r).load(Ordering::Relaxed) };
-                let result = if (lb & QNAN) != QNAN && (rb & QNAN) != QNAN {
-                    Some(f64::from_bits(lb) $op f64::from_bits(rb))
-                } else {
-                    match (Value::from_bits(lb).as_number(), Value::from_bits(rb).as_number()) {
-                        (Some(lv), Some(rv)) => Some(lv $op rv),
-                        _ => None,
-                    }
-                };
-                match result {
-                    Some(b) => store($regs, $dst, Value::bool(b)),
-                    None    => return Err(JitError::runtime(
-                        concat!("Compare error: expected numbers for '", stringify!($op), "'"),
-                        $loc.line as usize, $loc.col as usize,
-                    )),
-                }
-            }};
-        }
-
-        macro_rules! atomic_inc {
-            ($ptr:expr) => {{
-                let mut old = $ptr.load(Ordering::Relaxed);
-                loop {
-                    let next = if (old & QNAN) != QNAN {
-                        Value::number(f64::from_bits(old) + 1.0)
-                    } else if let Some(n) = Value::from_bits(old).as_number() {
-                        Value::number(n + 1.0)
-                    } else { break; };
-                    match $ptr.compare_exchange_weak(old, next.to_bits(), Ordering::AcqRel, Ordering::Relaxed) {
-                        Ok(_) => break,
-                        Err(a) => old = a,
-                    }
-                }
-            }};
-        }
-
-        #[inline(always)]
-        fn eq_fast(ctx: &Context, lb: u64, rb: u64) -> bool {
-            if lb == rb && (lb & QNAN) != QNAN { true }
-            else { ctx.values_equal(Value::from_bits(lb), Value::from_bits(rb)) }
-        }
 
         // ── Frame stack ───────────────────────────────────────────────────
         let mut tick: u32 = 0;
@@ -380,85 +542,16 @@ pub fn execute_bytecode<'a>(
                     frames[fi].pc += 1;
                 }
                 Instruction::ListGet { dst, list, index_reg, loc } => {
-                    let list_val  = load(&frames[fi].registers, list);
-                    let index_val = load(&frames[fi].registers, index_reg);
-                    let idx       = index_val.as_number()
-                        .ok_or_else(|| JitError::runtime("List index must be a number", loc.line as usize, loc.col as usize))?
-                        as usize;
-
-                    enum GetResult { Value(Value), Error(String) }
-                    let result = if let Some(oid) = list_val.as_obj_id() {
-                        let heap = ctx.heap.objects.read();
-                        if let Some(Some(obj)) = heap.get(oid as usize) {
-                            match &obj.obj {
-                                ManagedObject::List(elems) => {
-                                    let r = elems.read();
-                                    if idx < r.len() {
-                                        GetResult::Value(Value::from_bits(r[idx].load(Ordering::Relaxed)))
-                                    } else {
-                                        GetResult::Error(format!("List index {} out of bounds (len={})", idx, r.len()))
-                                    }
-                                }
-                                ManagedObject::String(s) => {
-                                    if idx < s.len() {
-                                        let byte = s.as_bytes()[idx];
-                                        GetResult::Value(Value::sso(&(byte as char).to_string()).unwrap_or(Value::from_bits(0)))
-                                    } else {
-                                        GetResult::Error(format!("String index {} out of bounds", idx))
-                                    }
-                                }
-                                _ => GetResult::Error("Expected a list or string for index".into()),
-                            }
-                        } else {
-                            GetResult::Error("Null object dereference".into())
-                        }
-                    } else {
-                        // SSO string — index the bytes directly.
-                        if let Some(s) = ctx.value_as_string(list_val)
-                            && idx < s.len()
-                        {
-                            let byte = s.as_bytes()[idx];
-                            GetResult::Value(Value::sso(&(byte as char).to_string()).unwrap_or(Value::from_bits(0)))
-                        } else {
-                            GetResult::Error("Expected a list or string for index".into())
-                        }
-                    };
-
-                    match result {
-                        GetResult::Value(v) => {
-                            let temp = AtomicU64::new(v.to_bits());
-                            store(&frames[fi].registers, dst, Value::from_bits(temp.load(Ordering::Relaxed)));
-                        }
+                    match handle_list_get(&frames[fi].registers, list, index_reg, &ctx, loc) {
+                        GetResult::Value(v) => store(&frames[fi].registers, dst, v),
                         GetResult::Error(msg) => return Err(JitError::runtime(msg, loc.line as usize, loc.col as usize)),
+                        _ => unreachable!(),
                     }
                     frames[fi].pc += 1;
                 }
                 Instruction::ListSet { list, index_reg, src, loc } => {
-                    let list_val  = load(&frames[fi].registers, list);
-                    let index_val = load(&frames[fi].registers, index_reg);
-                    let src_val   = load(&frames[fi].registers, src);
-                    let idx       = index_val.as_number()
-                        .ok_or_else(|| JitError::runtime("List index must be a number", loc.line as usize, loc.col as usize))?
-                        as usize;
-
-                    let oid = list_val.as_obj_id().ok_or_else(|| JitError::runtime(
-                        "Expected list for index assignment", loc.line as usize, loc.col as usize,
-                    ))?;
-                    let heap = ctx.heap.objects.read();
-                    let obj  = heap.get(oid as usize).and_then(|o| o.as_ref()).ok_or_else(|| {
-                        JitError::runtime("Expected list for index assignment", loc.line as usize, loc.col as usize)
-                    })?;
-                    let ManagedObject::List(elems) = &obj.obj else {
-                        return Err(JitError::runtime("Expected list for index assignment", loc.line as usize, loc.col as usize));
-                    };
-                    let r = elems.read();
-                    if idx < r.len() {
-                        r[idx].store(src_val.to_bits(), Ordering::Relaxed);
-                    } else {
-                        drop(r);
-                        let mut w = elems.write();
-                        if idx >= w.len() { w.resize_with(idx + 1, || AtomicU64::new(0)); }
-                        w[idx].store(src_val.to_bits(), Ordering::Relaxed);
+                    if let Err(msg) = handle_list_set(&frames[fi].registers, list, index_reg, src, &ctx, loc) {
+                        return Err(JitError::runtime(msg, loc.line as usize, loc.col as usize));
                     }
                     frames[fi].pc += 1;
                 }
@@ -470,28 +563,7 @@ pub fn execute_bytecode<'a>(
                     frames[fi].pc += 1;
                 }
                 Instruction::ObjectGet { dst, obj, name_id, loc } => {
-                    let obj_val = load(&frames[fi].registers, obj);
-
-                    enum GetResult { Value(Value), BoundMethod(Value), Error(String) }
-                    let result = if let Some(oid) = obj_val.as_obj_id() {
-                        let heap = ctx.heap.objects.read();
-                        if let Some(Some(o)) = heap.get(oid as usize) {
-                            match &o.obj {
-                                ManagedObject::Object(fields) => {
-                                    let r = fields.read();
-                                    if let Some(slot) = r.get(&name_id) {
-                                        GetResult::Value(Value::from_bits(slot.load(Ordering::Relaxed)))
-                                    } else {
-                                        // Property not found — return bound method
-                                        GetResult::BoundMethod(obj_val)
-                                    }
-                                }
-                                _ => GetResult::BoundMethod(obj_val), // Range.step, List.pad, etc.
-                            }
-                        } else { GetResult::Error("Null object dereference".into()) }
-                    } else { GetResult::Error("Expected object for property access".into()) };
-
-                    match result {
+                    match handle_object_get(&frames[fi].registers, obj, name_id, &ctx, loc) {
                         GetResult::Value(v) => store(&frames[fi].registers, dst, v),
                         GetResult::BoundMethod(receiver) => {
                             let temp = AtomicU64::new(0);
@@ -503,40 +575,8 @@ pub fn execute_bytecode<'a>(
                     frames[fi].pc += 1;
                 }
                 Instruction::ObjectSet { obj, name_id, src, loc } => {
-                    let obj_val = load(&frames[fi].registers, obj);
-                    let src_val = load(&frames[fi].registers, src);
-                    let oid     = obj_val.as_obj_id().ok_or_else(|| JitError::runtime(
-                        "Expected object for property assignment", loc.line as usize, loc.col as usize,
-                    ))?;
-                    let heap    = ctx.heap.objects.read();
-                    let o       = heap.get(oid as usize).and_then(|s| s.as_ref()).ok_or_else(|| JitError::runtime(
-                        "Expected object for property assignment", loc.line as usize, loc.col as usize,
-                    ))?;
-                    let ManagedObject::Object(fields) = &o.obj else {
-                        return Err(JitError::runtime("Expected object for property assignment", loc.line as usize, loc.col as usize));
-                    };
-
-                    {
-                        let rf = fields.read();
-                        if let Some(slot) = rf.get(&name_id) {
-                            slot.store(src_val.to_bits(), Ordering::Relaxed);
-                        } else {
-                            drop(rf);
-                            fields.write().insert(name_id, AtomicU64::new(src_val.to_bits()));
-                        }
-                    }
-
-                    // Write barrier — track tenured → nursery pointers.
-                    use crate::heap::Generation;
-                    use ys_core::compiler::QNAN;
-                    let src_bits = src_val.to_bits();
-                    if o.generation == Generation::Tenured
-                        && (src_bits & QNAN) == QNAN
-                        && let Some(src_oid) = Value::from_bits(src_bits).as_obj_id()
-                        && let Some(Some(src_obj)) = heap.get(src_oid as usize)
-                        && src_obj.generation == Generation::Nursery
-                    {
-                        ctx.heap.metadata.lock().remembered_set.insert(oid);
+                    if let Err(msg) = handle_object_set(&frames[fi].registers, obj, name_id, src, &ctx, loc) {
+                        return Err(JitError::runtime(msg, loc.line as usize, loc.col as usize));
                     }
                     frames[fi].pc += 1;
                 }
