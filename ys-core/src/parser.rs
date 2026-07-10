@@ -620,55 +620,10 @@ impl<'source> Parser<'source> {
 
         self.stream.expect(Token::Colon)?;
 
-        // Optimization: x: x + 1
+        // Optimization: x: x + 1  or  x: 1 + x
         if accessors.is_empty() {
-            if let Some(Token::Identifier(rhs_id)) = self.stream.peek()
-                && rhs_id == id
-                && matches!(self.stream.peek_n(1), Some(Token::Plus))
-                && matches!(self.stream.peek_n(2), Some(Token::Number(1.0)))
-            {
-                let t3 = self.stream.peek_n(3);
-                if matches!(
-                    t3,
-                    None | Some(Token::Newline)
-                        | Some(Token::RBrace)
-                        | Some(Token::Comma)
-                        | Some(Token::RParen)
-                ) {
-                    self.stream.advance()?;
-                    self.stream.advance()?;
-                    self.stream.advance()?;
-                    if info.is_global {
-                        instructions.push(Instruction::IncrementGlobal(info.idx));
-                    } else {
-                        instructions.push(Instruction::Increment(info.idx));
-                    }
-                    return Ok(());
-                }
-            }
-            if let Some(Token::Number(1.0)) = self.stream.peek()
-                && matches!(self.stream.peek_n(1), Some(Token::Plus))
-                && let Some(Token::Identifier(rhs_id)) = self.stream.peek_n(2)
-                && rhs_id == id
-            {
-                let t3 = self.stream.peek_n(3);
-                if matches!(
-                    t3,
-                    None | Some(Token::Newline)
-                        | Some(Token::RBrace)
-                        | Some(Token::Comma)
-                        | Some(Token::RParen)
-                ) {
-                    self.stream.advance()?;
-                    self.stream.advance()?;
-                    self.stream.advance()?;
-                    if info.is_global {
-                        instructions.push(Instruction::IncrementGlobal(info.idx));
-                    } else {
-                        instructions.push(Instruction::Increment(info.idx));
-                    }
-                    return Ok(());
-                }
+            if self.try_parse_increment(id, &info, instructions)? {
+                return Ok(());
             }
         }
 
@@ -1131,8 +1086,63 @@ impl<'source> Parser<'source> {
 
         res
     }
+
+    /// If the next tokens match `x: x + 1` or `x: 1 + x`, emit an Increment instruction.
+    /// Returns true if the pattern matched and was consumed.
+    fn try_parse_increment(
+        &mut self,
+        id: &'source str,
+        info: &VarInfo,
+        instructions: &mut Vec<Instruction>,
+    ) -> Result<bool, JitError> {
+        let emit_inc = |instructions: &mut Vec<Instruction>, info: &VarInfo| {
+            if info.is_global {
+                instructions.push(Instruction::IncrementGlobal(info.idx));
+            } else {
+                instructions.push(Instruction::Increment(info.idx));
+            }
+        };
+
+        // Check for `id + 1`
+        if matches!(self.stream.peek(), Some(Token::Identifier(rhs_id)) if rhs_id == id)
+            && matches!(self.stream.peek_n(1), Some(Token::Plus))
+            && matches!(self.stream.peek_n(2), Some(Token::Number(1.0)))
+            && is_stmt_end(self.stream.peek_n(3))
+        {
+            self.stream.advance()?;
+            self.stream.advance()?;
+            self.stream.advance()?;
+            emit_inc(instructions, info);
+            return Ok(true);
+        }
+
+        // Check for `1 + id`
+        if matches!(self.stream.peek(), Some(Token::Number(1.0)))
+            && matches!(self.stream.peek_n(1), Some(Token::Plus))
+            && matches!(self.stream.peek_n(2), Some(Token::Identifier(rhs_id)) if rhs_id == id)
+            && is_stmt_end(self.stream.peek_n(3))
+        {
+            self.stream.advance()?;
+            self.stream.advance()?;
+            self.stream.advance()?;
+            emit_inc(instructions, info);
+            return Ok(true);
+        }
+
+        Ok(false)
+    }
 }
 
+/// True if the token is a statement terminator (newline, brace, comma, paren, or EOF).
+fn is_stmt_end(t: Option<Token<'_>>) -> bool {
+    matches!(
+        t,
+        None | Some(Token::Newline)
+            | Some(Token::RBrace)
+            | Some(Token::Comma)
+            | Some(Token::RParen)
+    )
+}
 
 
 #[cfg(test)]
