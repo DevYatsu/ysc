@@ -276,6 +276,17 @@ impl Codegen {
                 self.compile_fun_call(name, args, *loc)
             }
             AstNode::MethodCall { obj, method, args, loc } => {
+                // Optimise `range.step(n)` — emit Range with step directly.
+                if method == "step" && args.len() == 1 {
+                    if let AstNode::Range { start, end, step: _existing_step, .. } = obj.as_ref() {
+                        let start_r = self.compile_node(start)?;
+                        let end_r = self.compile_node(end)?;
+                        let step_r = self.compile_node(&args[0])?;
+                        let dst = self.alloc_reg();
+                        self.emit(Instruction::Range { dst, start: start_r, end: end_r, step: Some(step_r), loc: *loc });
+                        return Ok(dst);
+                    }
+                }
                 let obj_r = self.compile_node(obj)?;
                 let name_id = self.intern(method);
                 let m = self.alloc_reg();
@@ -523,16 +534,27 @@ impl Codegen {
     // ── For loop ───────────────────────────────────────────────────────────
 
     fn compile_for(&mut self, var: &str, iter: &AstNode, body: &[AstNode], loc: Loc) -> Result<usize, JitError> {
-        let iter_r = self.compile_node(iter)?;
-        let start_reg = self.alloc_reg();
-        let end_reg = self.alloc_reg();
-        let step_reg = self.alloc_reg();
-        self.emit(Instruction::RangeInfo {
-            range: iter_r,
-            start_dst: start_reg,
-            end_dst: end_reg,
-            step_dst: step_reg,
-        });
+        // Inline known Range nodes to avoid heap round-trip.
+        let (start_reg, end_reg, step_reg) = if let AstNode::Range { start, end, step, .. } = iter {
+            let s = self.compile_node(start)?;
+            let e = self.compile_node(end)?;
+            let st = match step {
+                Some(sn) => self.compile_node(sn)?,
+                None => {
+                    let r = self.alloc_reg();
+                    self.emit(Instruction::LoadLiteral { dst: r, val: Value::number(1.0) });
+                    r
+                }
+            };
+            (s, e, st)
+        } else {
+            let iter_r = self.compile_node(iter)?;
+            let s = self.alloc_reg();
+            let e = self.alloc_reg();
+            let st = self.alloc_reg();
+            self.emit(Instruction::RangeInfo { range: iter_r, start_dst: s, end_dst: e, step_dst: st });
+            (s, e, st)
+        };
         let var_reg = self.alloc_reg();
         let was_in_fn = self.is_in_function;
         self.is_in_function = true; // for loop vars are always locals
