@@ -1,17 +1,17 @@
+// Sieve of Eratosthenes (prime counting benchmark)
 fun sieve(limit) {
   is_prime = [true; limit]
   is_prime[0] = false
   is_prime[1] = false
-  for p in 2 .. limit {
+  for p in 2..limit {
     if is_prime[p] {
-      step = p
-      for i in (p + p .. limit).step(p) {
+      for i in (p + p..limit).step(p) {
         is_prime[i] = false
       }
     }
   }
   total = 0
-  for p in 2 .. limit {
+  for p in 2..limit {
     if is_prime[p] {
       total = total + 1
     }
@@ -21,8 +21,7 @@ fun sieve(limit) {
 
 ANSWER = 78498
 total = sieve(1000001)
-print(total)
-print(ANSWER)
+print("Total " + str(total) + " primes <= 1000000")
 if total != ANSWER {
   print("WRONG!")
 }

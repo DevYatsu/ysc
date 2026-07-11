@@ -1,0 +1,7 @@
+# Simple HTTP server
+handler = |req| {
+  "Hello from YatsuScript!"
+}
+
+print("Serving on http://localhost:8080")
+serve(8080, handler)

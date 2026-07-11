@@ -1,0 +1,33 @@
+// map, filter, reduce
+
+numbers = [1, 2, 3, 4, 5, 6, 7, 8]
+
+// map: transform each element
+squares = numbers.map(|x| x * x)
+print("squares:")
+print(squares[0])
+print(squares[7])
+
+// filter: keep elements matching a predicate
+evens = numbers.filter(|x| x % 2 == 0)
+print("evens:")
+for i in 0..len(evens) {
+  print("  " + str(evens[i]))
+}
+
+// filter with block closure
+odds = numbers.filter(|x| {
+  x % 2 != 0
+})
+print("odds: " + str(len(odds)))
+
+// reduce: accumulate
+sum = numbers.reduce(0, |acc, v| acc + v)
+print("sum 1..8 = " + str(sum))
+
+product = numbers.reduce(1, |acc, v| acc * v)
+print("8! = " + str(product))
+
+// Chaining
+result = numbers.map(|x| x * 2).filter(|x| x > 10).reduce(0, |a, v| a + v)
+print("chained result = " + str(result))

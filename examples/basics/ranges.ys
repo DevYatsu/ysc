@@ -1,0 +1,27 @@
+// Ranges and stepped iteration
+
+// Basic range for-loop
+print("count to 5:")
+for i in 0..5 {
+  print("  " + str(i))
+}
+
+// Stepped range via .step()
+print("even numbers:")
+for i in (0..10).step(2) {
+  print("  " + str(i))
+}
+
+// Range expression evaluates to a Range object
+r = 1..4
+print("range start:")
+for i in r {
+  print("  " + str(i))
+}
+
+// .step() can use variables
+step = 3
+print("every 3rd:")
+for i in (0..12).step(step) {
+  print("  " + str(i))
+}

@@ -1,0 +1,15 @@
+// io — print, str, len
+name = "Yatsu"
+print("Hello, " + name)
+
+// Convert values to string
+print(str(42))
+print(str(true))
+print(str(len([1, 2, 3])))
+
+// len() works on lists, strings, and objects
+print(len("hello"))
+print(len({a: 1, b: 2}))
+
+// type() returns the type name
+// (available as prelude — no import needed)

@@ -1,0 +1,29 @@
+// Variables and assignment
+x = 10
+name = "YatsuScript"
+flag = true
+
+// Reassign
+x = x + 5
+print("x = " + str(x))
+
+// For loop over range
+for i in 0..5 {
+  print("i = " + str(i))
+}
+
+// While loop
+n = 3
+while n > 0 {
+  print("n = " + str(n))
+  n = n - 1
+}
+
+// If / else if / else
+if x > 20 {
+  print("x is large")
+} else if x > 10 {
+  print("x is medium")
+} else {
+  print("x is small")
+}

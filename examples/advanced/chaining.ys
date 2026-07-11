@@ -1,0 +1,22 @@
+// Method chaining
+
+// Transform pipeline on lists
+result = [1, 2, 3, 4, 5].map(|x| x * 3).filter(|x| x > 5).reduce(0, |a, v| a + v)
+print("pipeline: " + str(result))
+
+// Chain on a Range with step — collect into list manually
+sum = 0
+for i in (0..10).step(2) {
+  sum = sum + i
+}
+print("range sum: " + str(sum))
+
+// Nested list operations
+matrix = [[1, 2, 3], [4, 5, 6], [7, 8, 9]]
+row_sums = matrix.map(|row| {
+  row.reduce(0, |a, v| a + v)
+})
+print("row sums:")
+for i in 0..len(row_sums) {
+  print("  " + str(row_sums[i]))
+}

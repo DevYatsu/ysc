@@ -1,0 +1,22 @@
+// Lists and object collections
+
+// List literal
+fibo = [0, 1, 1, 2, 3, 5, 8, 13]
+print(fibo[0])
+print(fibo[7])
+
+// Rust-style repeat initialization
+scores = [0; 5]
+scores[0] = 95
+scores[1] = 87
+scores[2] = 73
+print(scores[0])
+
+// Object literal
+person = {name: "Alice", age: 30, city: "Paris"}
+print(person.name)
+print(person.age)
+
+// Nested access
+matrix = [[1, 2], [3, 4]]
+print(matrix[1][0])

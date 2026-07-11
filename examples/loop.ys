@@ -1,0 +1,8 @@
+// 1-million loop benchmark
+start = time()
+x = 1000000
+while x > 0 {
+  x = x - 1
+}
+elapsed = time() - start
+print("Finished. Run time = " + str(elapsed) + " seconds.")

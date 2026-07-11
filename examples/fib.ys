@@ -1,24 +1,26 @@
+// Fibonacci (recursive benchmark)
 TARGET = 28
 REPEAT = 5
 ANSWER = 317811
-fun fib ( n) {
+
+fun fib(n) {
   if n < 2 {
     return n
-  }
-  else {
-    return fib ( n - 1) + fib ( n - 2)
+  } else {
+    return fib(n - 1) + fib(n - 2)
   }
 }
-print ( "Running Fibonacci(" + str ( TARGET) + ") x " + str ( REPEAT) + " times...")
-print ( "Ready... Go!")
+
+print("Running Fibonacci(" + str(TARGET) + ") x " + str(REPEAT) + " times...")
+print("Ready... Go!")
 result = 0
-start = time ()
-for n in 0 .. REPEAT {
-  result = fib ( TARGET)
+start = time()
+for n in 0..REPEAT {
+  result = fib(TARGET)
 }
-elapsed = time () - start
-print ( "Finished. Run time = " + str ( elapsed) + " seconds.")
-print ( "Fibonacci number #" + str ( TARGET) + " = " + str ( result))
+elapsed = time() - start
+print("Finished. Run time = " + str(elapsed) + " seconds.")
+print("Fibonacci number //" + str(TARGET) + " = " + str(result))
 if result != ANSWER {
-  print ( "The answer is WRONG! Should be " + str ( ANSWER) + "!")
+  print("The answer is WRONG! Should be " + str(ANSWER) + "!")
 }

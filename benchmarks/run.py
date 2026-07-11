@@ -40,7 +40,7 @@ BENCHMARKS: dict[str, Benchmark] = {
     ),
     "1million_loop": Benchmark(
         name="1million_loop",
-        yatsuscript=["target/release/yatsuscript", str(EXAMPLES / "1million_loop.ys")],
+        yatsuscript=["target/release/yatsuscript", str(EXAMPLES / "loop.ys")],
         python=["python3", str(BENCH_ROOT / "python" / "1million_loop.py")],
         node=["node", str(BENCH_ROOT / "node" / "1million_loop.js")],
     ),

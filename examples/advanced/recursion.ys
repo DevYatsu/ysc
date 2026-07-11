@@ -1,0 +1,23 @@
+// Recursion
+
+fun fib(n) {
+  if n < 2 {
+    n
+  } else {
+    fib(n - 1) + fib(n - 2)
+  }
+}
+
+print("fib(10) = " + str(fib(10)))
+
+// Direct recursion
+fun factorial(n) {
+  if n <= 1 {
+    1
+  } else {
+    n * factorial(n - 1)
+  }
+}
+
+print("5! = " + str(factorial(5)))
+print("10! = " + str(factorial(10)))

@@ -1,0 +1,21 @@
+// Functions
+
+fun greet(name) {
+  return "Hello, " + name
+}
+
+print(greet("Yatsu"))
+
+fun add(a, b) {
+  a + b                    // implicit return — last expression
+}
+
+sum = add(3, 4)
+print("3 + 4 = " + str(sum))
+
+// Note: type annotations (a: int) are parsed but ignored at runtime
+fun multiply(a, b) {
+  a * b
+}
+
+print("6 * 7 = " + str(multiply(6, 7)))

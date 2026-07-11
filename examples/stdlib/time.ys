@@ -1,0 +1,13 @@
+// time — time() and timestamp()
+
+start = time()
+
+// Simulate work
+total = 0
+for i in 0..1000 {
+  total = total + i
+}
+
+elapsed = time() - start
+print("computed in " + str(elapsed) + " seconds")
+print("result = " + str(total))

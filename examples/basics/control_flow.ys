@@ -1,0 +1,38 @@
+// Control flow
+
+// If / else if / else
+score = 85
+if score >= 90 {
+  print("A")
+} else if score >= 80 {
+  print("B")
+} else if score >= 70 {
+  print("C")
+} else {
+  print("D")
+}
+
+// While loop
+n = 10
+total = 0
+while n > 0 {
+  total = total + n
+  n = n - 1
+}
+print("sum 1..10 = " + str(total))
+
+// For loop over range
+product = 1
+for i in 1..6 {
+  product = product * i
+}
+print("5! = " + str(product))
+
+// Short-circuit and/or
+a = true
+b = false
+if a and b {
+  print("both true")
+} else if a or b {
+  print("at least one true")
+}
