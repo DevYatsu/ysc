@@ -101,6 +101,9 @@ pub enum Token<'source> {
     /// 'move' closure capture-by-value keyword.
     #[token("move")]
     Move,
+    /// 'nil' null value literal.
+    #[token("nil")]
+    Nil,
     /// 'or' boolean OR operator.
     #[token("or")]
     Or,
