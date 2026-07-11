@@ -48,8 +48,7 @@ pub struct Parser<'source> {
     next_global: usize,
 
     is_in_function: bool,
-    /// Stack of "continue" jump-placeholder indices, one per active loop.
-    loop_continues: Vec<Vec<usize>>,
+
 
     /// Collected `use` paths (just parsed, evaluated later in Task 4).
     uses: Vec<Vec<String>>,
@@ -71,7 +70,6 @@ impl<'source> Parser<'source> {
             next_reg: 0,
             next_global: 0,
             is_in_function: false,
-            loop_continues: Vec::new(),
             functions: Vec::with_capacity(16),
             uses: Vec::new(),
         })
@@ -294,17 +292,11 @@ impl<'source> Parser<'source> {
             // ── Continue ───────────────────────────────────────────
             Token::Continue => {
                 self.stream.advance().ok();
-                if let Some(list) = self.loop_continues.last_mut() {
-                    list.push(instructions.len());
-                    instructions.push(Instruction::Jump(0));
-                    Some(Ok(()))
-                } else {
-                    Some(Err(JitError::parsing(
-                        "continue outside of loop".to_string(),
-                        self.stream.loc().line as usize,
-                        self.stream.loc().col as usize,
-                    )))
-                }
+                Some(Err(JitError::parsing(
+                    "continue not yet supported".to_string(),
+                    self.stream.loc().line as usize,
+                    self.stream.loc().col as usize,
+                )))
             }
 
             // ── Identifier → assignment or expression statement ──
@@ -663,8 +655,6 @@ impl<'source> Parser<'source> {
         self.stream.skip_newlines();
         let loop_start = instructions.len();
 
-        self.loop_continues.push(Vec::new());
-
         let cond = self.parse_expression(instructions)?;
 
         self.stream.skip_newlines();
@@ -683,11 +673,6 @@ impl<'source> Parser<'source> {
         }
         self.stream.expect(Token::RBrace)?;
         instructions.extend(body);
-
-        // Patch continue jumps to go to the condition check (loop start).
-        for idx in self.loop_continues.pop().unwrap() {
-            instructions[idx] = Instruction::Jump(loop_start);
-        }
 
         instructions.push(Instruction::Jump(loop_start));
         instructions[jump_idx] = Instruction::JumpIfFalse {
@@ -765,8 +750,6 @@ impl<'source> Parser<'source> {
         let jump_idx = instructions.len();
         instructions.push(Instruction::Jump(0)); // placeholder → JumpIfNotLess
 
-        self.loop_continues.push(Vec::new());
-
         self.stream.skip_newlines();
         self.stream.expect(Token::LBrace)?;
 
@@ -780,11 +763,6 @@ impl<'source> Parser<'source> {
         }
         self.stream.expect(Token::RBrace)?;
         instructions.extend(body);
-
-        let continue_target = instructions.len();
-        for idx in self.loop_continues.pop().unwrap() {
-            instructions[idx] = Instruction::Jump(continue_target);
-        }
 
         // Increment: var = var + step
         instructions.push(Instruction::Add {

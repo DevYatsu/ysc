@@ -1,7 +1,8 @@
-now = timestamp ()
+start = time ()
 x = 1000000
 print ( "Ready... Go!")
 while x > 0 {
   x = x - 1
 }
-print ( "Finished. Run time = " + str(now.elapsed) + " seconds.")
+elapsed = time () - start
+print ( "Finished. Run time = " + str(elapsed) + " seconds.")

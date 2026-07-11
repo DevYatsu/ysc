@@ -12,11 +12,12 @@ fun fib ( n) {
 print ( "Running Fibonacci(" + str ( TARGET) + ") x " + str ( REPEAT) + " times...")
 print ( "Ready... Go!")
 result = 0
-now = timestamp ()
+start = time ()
 for n in 0 .. REPEAT {
   result = fib ( TARGET)
 }
-print ( "Finished. Run time = " + str ( now .elapsed) + " seconds.")
+elapsed = time () - start
+print ( "Finished. Run time = " + str ( elapsed) + " seconds.")
 print ( "Fibonacci number #" + str ( TARGET) + " = " + str ( result))
 if result != ANSWER {
   print ( "The answer is WRONG! Should be " + str ( ANSWER) + "!")

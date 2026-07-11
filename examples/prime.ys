@@ -1,22 +1,22 @@
-now = timestamp ()
 ANSWER = 78498
-MAX_NUMBER_TO_CHECK = 1000000
-prime_mask = []
-prime_mask .pad ( MAX_NUMBER_TO_CHECK + 1, true)
-prime_mask[0] = false
-prime_mask[1] = false
-total_primes_found = 0
-for p in 2 .. MAX_NUMBER_TO_CHECK + 1 {
-  if ! prime_mask[p] {
-    continue
-  }
-  total_primes_found = total_primes_found + 1
-  for i in ( 2 * p .. MAX_NUMBER_TO_CHECK + 1) .step ( p) {
-    prime_mask[i] = false
+MAX = 1000000
+is_prime = []
+is_prime.pad(MAX + 1, true)
+is_prime[0] = false
+is_prime[1] = false
+total = 0
+for p in 2 .. MAX + 1 {
+  if is_prime[p] {
+    total = total + 1
+    step = p
+    i = p + p
+    while i < MAX + 1 {
+      is_prime[i] = false
+      i = i + step
+    }
   }
 }
-print ( "Total " + str ( total_primes_found) + " primes <= " + str ( MAX_NUMBER_TO_CHECK))
-print ( "Run time = " + str ( now .elapsed) + " seconds.")
-if total_primes_found != ANSWER {
+print ( "Total " + str ( total) + " primes <= " + str ( MAX))
+if total != ANSWER {
   print ( "The answer is WRONG! Should be " + str ( ANSWER) + "!")
 }
