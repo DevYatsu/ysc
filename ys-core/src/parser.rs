@@ -1682,7 +1682,7 @@ enum Accessor {
 
 /// True if the token is a statement terminator (newline, brace, comma,
 /// paren, or EOF).
-fn is_stmt_end(t: Option<Token<'_>>) -> bool {
+pub(crate) fn is_stmt_end(t: Option<Token<'_>>) -> bool {
     matches!(
         t,
         None | Some(Token::Newline)

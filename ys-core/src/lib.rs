@@ -9,9 +9,13 @@
 //! - `ys-runtime` — takes the compiled [`Program`] and executes it
 //! - `yatsuscript-lsp` — uses the lexer and parser for analysis
 
+pub mod ast;
+pub mod ast_parser;
+pub mod codegen;
 pub mod compiler;
 pub mod error;
 pub mod lexer;
+pub mod optimizer;
 pub mod parser;
 pub mod token_stream;
 pub mod template;

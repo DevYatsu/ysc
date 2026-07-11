@@ -2,7 +2,7 @@ use std::path::Path;
 use std::fs;
 use std::time::Instant;
 
-use ys_core::parser::Parser;
+use ys_core::codegen::Codegen;
 use ys_runtime::{run_interpreter, Interpreter};
 
 /// Run a script file.
@@ -43,8 +43,7 @@ pub async fn check_file(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 async fn check_source_internal(source: &str, path: Option<&Path>) -> Result<(), Box<dyn std::error::Error>> {
-    let parser = Parser::new(source)?;
-    let _program = parser.compile()?;
+    let _program = Codegen::compile(source)?;
     if let Some(p) = path {
         println!("{}: OK", p.display());
     }
@@ -55,8 +54,7 @@ async fn check_source_internal(source: &str, path: Option<&Path>) -> Result<(), 
 pub async fn run_source(source: &str) -> Result<(), Box<dyn std::error::Error>> {
     let start = Instant::now();
 
-    let parser = Parser::new(source)?;
-    let program = parser.compile()?;
+    let program = Codegen::compile(source)?;
     
     let elapsed_compile = start.elapsed();
     
@@ -84,15 +82,7 @@ pub async fn run_repl() -> Result<(), Box<dyn std::error::Error>> {
                 
                 if line.trim().is_empty() { continue; }
 
-                let parser = match Parser::new(&line) {
-                    Ok(p) => p,
-                    Err(e) => {
-                        crate::error_display::display_error(&e, &line);
-                        continue;
-                    }
-                };
-
-                let program = match parser.compile() {
+                let program = match Codegen::compile(&line) {
                     Ok(p) => p,
                     Err(e) => {
                         crate::error_display::display_error(&e, &line);
