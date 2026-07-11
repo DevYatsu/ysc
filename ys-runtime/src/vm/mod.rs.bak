@@ -426,10 +426,10 @@ pub fn execute_bytecode<'a>(
         loop {
             if frames.is_empty() { return Ok(Value::from_bits(0)); }
 
-            let fi = frames.len() - 1;
+            let _fi = frames.len() - 1;
 
-            // Implicit return at end of frame (fi is safe here — no pop yet).
-            if frames[fi].pc >= frames[fi].instr_slice().len() {
+            // Implicit return at end of frame.
+            if frames.last_mut().unwrap().pc >= frames.last_mut().unwrap().instr_slice().len() {
                 let frame    = frames.pop().unwrap();
                 let ret_val  = Value::from_bits(0);
                 pool_regs(frame.registers);
@@ -441,57 +441,57 @@ pub fn execute_bytecode<'a>(
             }
 
             // Copy instr_ptr by value to avoid borrowing frames
-            let instr_ptr = frames[fi].instructions;
-            let pc = frames[fi].pc;
+            let instr_ptr = frames.last_mut().unwrap().instructions;
+            let pc = frames.last_mut().unwrap().pc;
             let instr = &instr_ptr.slice()[pc];
 
             match instr {
                 // ── Memory ───────────────────────────────────────────────
                 Instruction::LoadLiteral { dst, val } => {
-                    frames[fi].registers[*dst] = *val;
-                    frames[fi].pc += 1;
+                    frames.last_mut().unwrap().registers[*dst] = *val;
+                    frames.last_mut().unwrap().pc += 1;
                 }
                 Instruction::Move { dst, src } => {
                     let d = *dst;
-                    let v = frames[fi].registers[*src];
-                    frames[fi].registers[d] = v;
-                    frames[fi].pc += 1;
+                    let v = frames.last_mut().unwrap().registers[*src];
+                    frames.last_mut().unwrap().registers[d] = v;
+                    frames.last_mut().unwrap().pc += 1;
                 }
                 Instruction::LoadGlobal { dst, global } => {
                     let v = ctx.globals.get()[*global];
-                    frames[fi].registers[*dst] = v;
-                    frames[fi].pc += 1;
+                    frames.last_mut().unwrap().registers[*dst] = v;
+                    frames.last_mut().unwrap().pc += 1;
                 }
                 Instruction::StoreGlobal { global, src } => {
-                    let v = frames[fi].registers[*src];
+                    let v = frames.last_mut().unwrap().registers[*src];
                     ctx.globals.get_mut()[*global] = v;
-                    frames[fi].pc += 1;
+                    frames.last_mut().unwrap().pc += 1;
                 }
 
                 // ── Control flow ──────────────────────────────────────────
-                Instruction::Jump(target) => { frames[fi].pc = *target; continue; }
+                Instruction::Jump(target) => { frames.last_mut().unwrap().pc = *target; continue; }
                 Instruction::JumpIfNotLess { var, end, target } => {
-                    let v = frames[fi].registers[*var];
-                    let e = frames[fi].registers[*end];
+                    let v = frames.last_mut().unwrap().registers[*var];
+                    let e = frames.last_mut().unwrap().registers[*end];
                     if let (Some(vn), Some(en)) = (v.as_number(), e.as_number()) {
                         if vn >= en {
-                            frames[fi].pc = *target;
+                            frames.last_mut().unwrap().pc = *target;
                             continue;
                         }
                     }
-                    frames[fi].pc += 1;
+                    frames.last_mut().unwrap().pc += 1;
                 }
                 Instruction::JumpIfFalse { cond, target } => {
-                    if !frames[fi].registers[*cond].is_truthy() {
-                        frames[fi].pc = *target;
+                    if !frames.last_mut().unwrap().registers[*cond].is_truthy() {
+                        frames.last_mut().unwrap().pc = *target;
                     } else {
-                        frames[fi].pc += 1;
+                        frames.last_mut().unwrap().pc += 1;
                     }
                     continue;
                 }
                 Instruction::Return(val_reg) => {
                     let ret = val_reg
-                        .map(|r| frames[fi].registers[r])
+                        .map(|r| frames.last_mut().unwrap().registers[r])
                         .unwrap_or_else(|| Value::from_bits(0));
                     let frame = frames.pop().unwrap();
                     pool_regs(frame.registers);
@@ -504,15 +504,15 @@ pub fn execute_bytecode<'a>(
 
                 // ── Arithmetic ────────────────────────────────────────────
                 Instruction::Add { dst, lhs, rhs, loc } => {
-                    let lv = frames[fi].registers[*lhs];
-                    let rv = frames[fi].registers[*rhs];
+                    let lv = frames.last_mut().unwrap().registers[*lhs];
+                    let rv = frames.last_mut().unwrap().registers[*rhs];
                     let lb = lv.to_bits();
                     let rb = rv.to_bits();
 
                     if (lb & QNAN) != QNAN && (rb & QNAN) != QNAN {
-                        frames[fi].registers[*dst] = Value::number(f64::from_bits(lb) + f64::from_bits(rb));
+                        frames.last_mut().unwrap().registers[*dst] = Value::number(f64::from_bits(lb) + f64::from_bits(rb));
                     } else if let (Some(lv), Some(rv)) = (lv.as_number(), rv.as_number()) {
-                        frames[fi].registers[*dst] = Value::number(lv + rv);
+                        frames.last_mut().unwrap().registers[*dst] = Value::number(lv + rv);
                     } else {
                         // String concatenation
                         let combined = lv.with_str(&ctx, |l| rv.with_str(&ctx, |r| {
@@ -521,10 +521,10 @@ pub fn execute_bytecode<'a>(
                         })).flatten();
                         match combined {
                             Some(s) if Value::sso(&s).is_some() => {
-                                frames[fi].registers[*dst] = Value::sso(&s).unwrap();
+                                frames.last_mut().unwrap().registers[*dst] = Value::sso(&s).unwrap();
                             }
                             Some(s) => {
-                                frames[fi].registers[*dst] =
+                                frames.last_mut().unwrap().registers[*dst] =
                                     ctx.alloc(ManagedObject::String(Arc::from(s)));
                             }
                             None => return Err(JitError::runtime(
@@ -533,90 +533,90 @@ pub fn execute_bytecode<'a>(
                             )),
                         }
                     }
-                    frames[fi].pc += 1;
+                    frames.last_mut().unwrap().pc += 1;
                 }
                 Instruction::Sub { dst, lhs, rhs, loc } => {
-                    numeric_bin!(&mut frames[fi].registers, *dst, *lhs, *rhs, -, *loc);
-                    frames[fi].pc += 1;
+                    numeric_bin!(&mut frames.last_mut().unwrap().registers, *dst, *lhs, *rhs, -, *loc);
+                    frames.last_mut().unwrap().pc += 1;
                 }
                 Instruction::Mul { dst, lhs, rhs, loc } => {
-                    numeric_bin!(&mut frames[fi].registers, *dst, *lhs, *rhs, *, *loc);
-                    frames[fi].pc += 1;
+                    numeric_bin!(&mut frames.last_mut().unwrap().registers, *dst, *lhs, *rhs, *, *loc);
+                    frames.last_mut().unwrap().pc += 1;
                 }
                 Instruction::Div { dst, lhs, rhs, loc } => {
-                    numeric_bin!(&mut frames[fi].registers, *dst, *lhs, *rhs, /, *loc);
-                    frames[fi].pc += 1;
+                    numeric_bin!(&mut frames.last_mut().unwrap().registers, *dst, *lhs, *rhs, /, *loc);
+                    frames.last_mut().unwrap().pc += 1;
                 }
                 Instruction::Mod { dst, lhs, rhs, loc } => {
-                    numeric_bin!(&mut frames[fi].registers, *dst, *lhs, *rhs, %, *loc);
-                    frames[fi].pc += 1;
+                    numeric_bin!(&mut frames.last_mut().unwrap().registers, *dst, *lhs, *rhs, %, *loc);
+                    frames.last_mut().unwrap().pc += 1;
                 }
                 Instruction::Not { dst, src, .. } => {
                     let d = *dst;
-                    frames[fi].registers[d] =
-                          Value::bool(!frames[fi].registers[*src].is_truthy());
-                    frames[fi].pc += 1;
+                    frames.last_mut().unwrap().registers[d] =
+                          Value::bool(!frames.last_mut().unwrap().registers[*src].is_truthy());
+                    frames.last_mut().unwrap().pc += 1;
                 }
 
                 // ── Comparisons ───────────────────────────────────────────
                 Instruction::Eq { dst, lhs, rhs } => {
-                    let lv = frames[fi].registers[*lhs];
-                    let rv = frames[fi].registers[*rhs];
-                    frames[fi].registers[*dst] = Value::bool(lv.to_bits() == rv.to_bits() && (lv.to_bits() & QNAN) != QNAN);
-                    frames[fi].pc += 1;
+                    let lv = frames.last_mut().unwrap().registers[*lhs];
+                    let rv = frames.last_mut().unwrap().registers[*rhs];
+                    frames.last_mut().unwrap().registers[*dst] = Value::bool(lv.to_bits() == rv.to_bits() && (lv.to_bits() & QNAN) != QNAN);
+                    frames.last_mut().unwrap().pc += 1;
                 }
                 Instruction::Ne { dst, lhs, rhs } => {
-                    let lv = frames[fi].registers[*lhs];
-                    let rv = frames[fi].registers[*rhs];
-                    frames[fi].registers[*dst] = Value::bool(lv.to_bits() != rv.to_bits() || (lv.to_bits() & QNAN) == QNAN);
-                    frames[fi].pc += 1;
+                    let lv = frames.last_mut().unwrap().registers[*lhs];
+                    let rv = frames.last_mut().unwrap().registers[*rhs];
+                    frames.last_mut().unwrap().registers[*dst] = Value::bool(lv.to_bits() != rv.to_bits() || (lv.to_bits() & QNAN) == QNAN);
+                    frames.last_mut().unwrap().pc += 1;
                 }
                 Instruction::Lt { dst, lhs, rhs, loc } => {
-                    compare_op!(&mut frames[fi].registers, *dst, *lhs, *rhs, <, *loc);
-                    frames[fi].pc += 1;
+                    compare_op!(&mut frames.last_mut().unwrap().registers, *dst, *lhs, *rhs, <, *loc);
+                    frames.last_mut().unwrap().pc += 1;
                 }
                 Instruction::Le { dst, lhs, rhs, loc } => {
-                    compare_op!(&mut frames[fi].registers, *dst, *lhs, *rhs, <=, *loc);
-                    frames[fi].pc += 1;
+                    compare_op!(&mut frames.last_mut().unwrap().registers, *dst, *lhs, *rhs, <=, *loc);
+                    frames.last_mut().unwrap().pc += 1;
                 }
                 Instruction::Gt { dst, lhs, rhs, loc } => {
-                    compare_op!(&mut frames[fi].registers, *dst, *lhs, *rhs, >, *loc);
-                    frames[fi].pc += 1;
+                    compare_op!(&mut frames.last_mut().unwrap().registers, *dst, *lhs, *rhs, >, *loc);
+                    frames.last_mut().unwrap().pc += 1;
                 }
                 Instruction::Ge { dst, lhs, rhs, loc } => {
-                    compare_op!(&mut frames[fi].registers, *dst, *lhs, *rhs, >=, *loc);
-                    frames[fi].pc += 1;
+                    compare_op!(&mut frames.last_mut().unwrap().registers, *dst, *lhs, *rhs, >=, *loc);
+                    frames.last_mut().unwrap().pc += 1;
                 }
 
                 // ── Increments ────────────────────────────────────────────
                 Instruction::Increment(reg) => {
-                    inc_register!(&mut frames[fi].registers, *reg);
-                    frames[fi].pc += 1;
+                    inc_register!(&mut frames.last_mut().unwrap().registers, *reg);
+                    frames.last_mut().unwrap().pc += 1;
                 }
                 Instruction::IncrementGlobal(global) => {
                     let v = ctx.globals.get()[*global];
                     if let Some(n) = v.as_number() {
                         ctx.globals.get_mut()[*global] = Value::number(n + 1.0);
                     }
-                    frames[fi].pc += 1;
+                    frames.last_mut().unwrap().pc += 1;
                 }
 
                 // ── Ranges ────────────────────────────────────────────────
                 Instruction::Range { dst, start, end, step, loc } => {
-                    let s = frames[fi].registers[*start].as_number()
+                    let s = frames.last_mut().unwrap().registers[*start].as_number()
                         .ok_or_else(|| JitError::runtime("Range start must be a number", loc.line as usize, loc.col as usize))?;
-                    let e = frames[fi].registers[*end].as_number()
+                    let e = frames.last_mut().unwrap().registers[*end].as_number()
                         .ok_or_else(|| JitError::runtime("Range end must be a number", loc.line as usize, loc.col as usize))?;
                     let st = if let Some(sr) = *step {
-                        frames[fi].registers[sr].as_number()
+                        frames.last_mut().unwrap().registers[sr].as_number()
                             .ok_or_else(|| JitError::runtime("Range step must be a number", loc.line as usize, loc.col as usize))?
                     } else { 1.0 };
-                    frames[fi].registers[*dst] =
+                    frames.last_mut().unwrap().registers[*dst] =
                         ctx.alloc(ManagedObject::Range { start: s, end: e, step: st });
-                    frames[fi].pc += 1;
+                    frames.last_mut().unwrap().pc += 1;
                 }
                 Instruction::RangeInfo { range, start_dst, end_dst, step_dst } => {
-                    let rv  = frames[fi].registers[*range];
+                    let rv  = frames.last_mut().unwrap().registers[*range];
                     let (s, e, st) = if let Some(oid) = rv.as_obj_id() {
                         let heap = ctx.heap.objects.get();
                         let o = unsafe { heap.get_unchecked(oid as usize) };
@@ -624,89 +624,89 @@ pub fn execute_bytecode<'a>(
                             && let ManagedObject::Range { start, end, step } = &o.obj
                         { (*start, *end, *step) } else { (0.0, 0.0, 1.0) }
                     } else { (0.0, 0.0, 1.0) };
-                    frames[fi].registers[*start_dst] = Value::number(s);
-                    frames[fi].registers[*end_dst]   = Value::number(e);
-                    frames[fi].registers[*step_dst]  = Value::number(st);
-                    frames[fi].pc += 1;
+                    frames.last_mut().unwrap().registers[*start_dst] = Value::number(s);
+                    frames.last_mut().unwrap().registers[*end_dst]   = Value::number(e);
+                    frames.last_mut().unwrap().registers[*step_dst]  = Value::number(st);
+                    frames.last_mut().unwrap().pc += 1;
                 }
 
                 // ── Collections ───────────────────────────────────────────
                 Instruction::NewList { dst, len } => {
                     let elems: Vec<Value> = (0..*len).map(|_| Value::from_bits(0)).collect();
-                    frames[fi].registers[*dst] =
+                    frames.last_mut().unwrap().registers[*dst] =
                         ctx.alloc(ManagedObject::List(elems));
-                    frames[fi].pc += 1;
+                    frames.last_mut().unwrap().pc += 1;
                 }
                 Instruction::NewListFrom { dst, elems } => {
-                    let vals: Vec<Value> = elems.iter().map(|&r| frames[fi].registers[r]).collect();
-                    frames[fi].registers[*dst] =
+                    let vals: Vec<Value> = elems.iter().map(|&r| frames.last_mut().unwrap().registers[r]).collect();
+                    frames.last_mut().unwrap().registers[*dst] =
                         ctx.alloc(ManagedObject::List(vals));
-                    frames[fi].pc += 1;
+                    frames.last_mut().unwrap().pc += 1;
                 }
                 Instruction::NewListRepeat { dst, val, count } => {
-                    let v = frames[fi].registers[*val];
-                    let n = frames[fi].registers[*count].as_number().unwrap_or(0.0) as usize;
+                    let v = frames.last_mut().unwrap().registers[*val];
+                    let n = frames.last_mut().unwrap().registers[*count].as_number().unwrap_or(0.0) as usize;
                     let vals = vec![v; n];
-                    frames[fi].registers[*dst] =
+                    frames.last_mut().unwrap().registers[*dst] =
                         ctx.alloc(ManagedObject::List(vals));
-                    frames[fi].pc += 1;
+                    frames.last_mut().unwrap().pc += 1;
                 }
                 Instruction::ListGet { dst, list, index_reg, loc } => {
-                    match handle_list_get(&frames[fi].registers, *list, *index_reg, &ctx, *loc) {
-                        GetResult::Value(v) => frames[fi].registers[*dst] = v,
+                    match handle_list_get(&frames.last_mut().unwrap().registers, *list, *index_reg, &ctx, *loc) {
+                        GetResult::Value(v) => frames.last_mut().unwrap().registers[*dst] = v,
                         GetResult::Error(msg) => return Err(JitError::runtime(msg, loc.line as usize, loc.col as usize)),
                         _ => unreachable!(),
                     }
-                    frames[fi].pc += 1;
+                    frames.last_mut().unwrap().pc += 1;
                 }
                 Instruction::ListSet { list, index_reg, src, loc } => {
-                    if let Err(msg) = handle_list_set(&frames[fi].registers, *list, *index_reg, *src, &ctx, *loc) {
+                    if let Err(msg) = handle_list_set(&frames.last_mut().unwrap().registers, *list, *index_reg, *src, &ctx, *loc) {
                         return Err(JitError::runtime(msg, loc.line as usize, loc.col as usize));
                     }
-                    frames[fi].pc += 1;
+                    frames.last_mut().unwrap().pc += 1;
                 }
                 Instruction::NewObject { dst, .. } => {
-                    frames[fi].registers[*dst] =
+                    frames.last_mut().unwrap().registers[*dst] =
                         ctx.alloc(ManagedObject::Object(rustc_hash::FxHashMap::default()));
-                    frames[fi].pc += 1;
+                    frames.last_mut().unwrap().pc += 1;
                 }
                 Instruction::NewObjectFrom { dst, fields } => {
                     let mut map = rustc_hash::FxHashMap::default();
                     map.reserve(fields.len());
                     for &(name_id, src) in fields.iter() {
-                        map.insert(name_id, frames[fi].registers[src]);
+                        map.insert(name_id, frames.last_mut().unwrap().registers[src]);
                     }
-                    frames[fi].registers[*dst] =
+                    frames.last_mut().unwrap().registers[*dst] =
                         ctx.alloc(ManagedObject::Object(map));
-                    frames[fi].pc += 1;
+                    frames.last_mut().unwrap().pc += 1;
                 }
                 Instruction::ObjectGet { dst, obj, name_id, loc } => {
-                    match handle_object_get(&frames[fi].registers, *obj, *name_id, &ctx, *loc) {
-                        GetResult::Value(v) => frames[fi].registers[*dst] = v,
+                    match handle_object_get(&frames.last_mut().unwrap().registers, *obj, *name_id, &ctx, *loc) {
+                        GetResult::Value(v) => frames.last_mut().unwrap().registers[*dst] = v,
                         GetResult::BoundMethod(receiver) => {
-                            frames[fi].registers[*dst] =
+                            frames.last_mut().unwrap().registers[*dst] =
                                 ctx.alloc(ManagedObject::BoundMethod { receiver, name_id: *name_id });
                         }
                         GetResult::Error(msg) => return Err(JitError::runtime(msg, loc.line as usize, loc.col as usize)),
                     }
-                    frames[fi].pc += 1;
+                    frames.last_mut().unwrap().pc += 1;
                 }
                 Instruction::ObjectSet { obj, name_id, src, loc } => {
-                    if let Err(msg) = handle_object_set(&frames[fi].registers, *obj, *name_id, *src, &ctx, *loc) {
+                    if let Err(msg) = handle_object_set(&frames.last_mut().unwrap().registers, *obj, *name_id, *src, &ctx, *loc) {
                         return Err(JitError::runtime(msg, loc.line as usize, loc.col as usize));
                     }
-                    frames[fi].pc += 1;
+                    frames.last_mut().unwrap().pc += 1;
                 }
 
                 // ── Closures ──────────────────────────────────────────────
                 Instruction::MakeClosure { dst, func_index, captures } => {
                     let mut vals = Vec::with_capacity(captures.len());
                     for &reg in captures.iter() {
-                        vals.push(frames[fi].registers[reg]);
+                        vals.push(frames.last_mut().unwrap().registers[reg]);
                     }
                     let cl = crate::heap::Closure { func_index: *func_index as u32, captures: vals };
-                    frames[fi].registers[*dst] = ctx.alloc(ManagedObject::Closure(cl));
-                    frames[fi].pc += 1;
+                    frames.last_mut().unwrap().registers[*dst] = ctx.alloc(ManagedObject::Closure(cl));
+                    frames.last_mut().unwrap().pc += 1;
                 }
 
                 // ── Calls ─────────────────────────────────────────────────
@@ -724,10 +724,10 @@ pub fn execute_bytecode<'a>(
                     match callable {
                         Callable::Native(nf) => {
                             let args_regs = box_data.args_regs.clone();
-                            let args: Vec<Value> = args_regs.iter().map(|&r| frames[fi].registers[r]).collect();
+                            let args: Vec<Value> = args_regs.iter().map(|&r| frames.last_mut().unwrap().registers[r]).collect();
                             let res = nf(ctx.clone(), args, loc).await?;
-                            if let Some(d) = dst { frames[fi].registers[d] = res; }
-                            frames[fi].pc += 1;
+                            if let Some(d) = dst { frames.last_mut().unwrap().registers[d] = res; }
+                            frames.last_mut().unwrap().pc += 1;
                         }
                         Callable::User(f) => {
                             let args_regs = &*box_data.args_regs;
@@ -738,8 +738,8 @@ pub fn execute_bytecode<'a>(
                                 ));
                             }
                             let ret = dst.map(|d| ReturnTarget { dst: d });
-                            frames[fi].pc += 1;
-                            let callee_regs = build_call_registers(f.locals_count, args_regs, &frames[fi].registers);
+                            frames.last_mut().unwrap().pc += 1;
+                            let callee_regs = build_call_registers(f.locals_count, args_regs, &frames.last_mut().unwrap().registers);
                             frames.push(CallFrame { instructions: InstrPtr::from_arc(&f.instructions), registers: callee_regs, pc: 0, return_to: ret });
                         }
                     }
@@ -749,7 +749,7 @@ pub fn execute_bytecode<'a>(
                     let callee_reg = box_data.callee_reg;
                         let dst = box_data.dst;
                         let loc = box_data.loc;
-                    let callee_val = frames[fi].registers[callee_reg];
+                    let callee_val = frames.last_mut().unwrap().registers[callee_reg];
 
                     // BoundMethod dispatch (range.step, list.pad, …)
                     if let Some(oid) = callee_val.as_obj_id() {
@@ -770,12 +770,12 @@ pub fn execute_bytecode<'a>(
                                             .and_then(|o| if let ManagedObject::Range { start, end, .. } = &o.obj { Some((*start, *end)) } else { None })
                                     }.unwrap_or((0.0, 0.0));
                                     let args_regs = &*box_data.args_regs;
-                                    let new_step = args_regs.first().map(|&r| frames[fi].registers[r].as_number().unwrap_or(1.0)).unwrap_or(1.0);
+                                    let new_step = args_regs.first().map(|&r| frames.last_mut().unwrap().registers[r].as_number().unwrap_or(1.0)).unwrap_or(1.0);
                                     let val = ctx.alloc(ManagedObject::Range { start, end, step: new_step });
                                     if let Some(d) = dst {
-                                        frames[fi].registers[d] = val;
+                                        frames.last_mut().unwrap().registers[d] = val;
                                     }
-                                    frames[fi].pc += 1;
+                                    frames.last_mut().unwrap().pc += 1;
                                     continue;
                                 }
                             return Err(JitError::runtime(format!("Unknown method '{}'", method), loc.line as usize, loc.col as usize));
@@ -796,12 +796,12 @@ pub fn execute_bytecode<'a>(
                                 ));
                             }
                             let ret = dst.map(|d| ReturnTarget { dst: d });
-                            frames[fi].pc += 1;
+                            frames.last_mut().unwrap().pc += 1;
                             let callee_regs = build_closure_registers(
                                 func.locals_count,
                                 &cl.captures,
                                 args_regs,
-                                &frames[fi].registers,
+                                &frames.last_mut().unwrap().registers,
                             );
                             frames.push(CallFrame {
                                 instructions: InstrPtr::from_arc(&func.instructions),
@@ -824,10 +824,10 @@ pub fn execute_bytecode<'a>(
                     match callable {
                         Callable::Native(nf) => {
                             let args_regs = box_data.args_regs.clone();
-                            let args: Vec<Value> = args_regs.iter().map(|&r| frames[fi].registers[r]).collect();
+                            let args: Vec<Value> = args_regs.iter().map(|&r| frames.last_mut().unwrap().registers[r]).collect();
                             let res = nf(ctx.clone(), args, loc).await?;
-                            if let Some(d) = dst { frames[fi].registers[d] = res; }
-                            frames[fi].pc += 1;
+                            if let Some(d) = dst { frames.last_mut().unwrap().registers[d] = res; }
+                            frames.last_mut().unwrap().pc += 1;
                         }
                         Callable::User(f) => {
                             let args_regs = &*box_data.args_regs;
@@ -838,8 +838,8 @@ pub fn execute_bytecode<'a>(
                                 ));
                             }
                             let ret = dst.map(|d| ReturnTarget { dst: d });
-                            frames[fi].pc += 1;
-                            let callee_regs = build_call_registers(f.locals_count, args_regs, &frames[fi].registers);
+                            frames.last_mut().unwrap().pc += 1;
+                            let callee_regs = build_call_registers(f.locals_count, args_regs, &frames.last_mut().unwrap().registers);
                             frames.push(CallFrame { instructions: InstrPtr::from_arc(&f.instructions), registers: callee_regs, pc: 0, return_to: ret });
                         }
                     }
