@@ -661,6 +661,17 @@ pub fn execute_bytecode<'a>(
                     frames.last_mut().unwrap().pc += 1;
                 }
 
+                // ── Closures ──────────────────────────────────────────────
+                Instruction::MakeClosure { dst, func_index, captures } => {
+                    let mut vals = Vec::with_capacity(captures.len());
+                    for &reg in captures.iter() {
+                        vals.push(frames.last_mut().unwrap().registers[reg]);
+                    }
+                    let cl = crate::heap::Closure { func_index: *func_index as u32, captures: vals };
+                    frames.last_mut().unwrap().registers[*dst] = ctx.alloc(ManagedObject::Closure(cl));
+                    frames.last_mut().unwrap().pc += 1;
+                }
+
                 // ── Calls ─────────────────────────────────────────────────
                 Instruction::Call(box_data) => {
                     let name_id = box_data.name_id;
@@ -745,6 +756,39 @@ pub fn execute_bytecode<'a>(
                                     continue;
                                 }
                             return Err(JitError::runtime(format!("Unknown method '{}'", method), loc.line as usize, loc.col as usize));
+                        }
+
+                        // Closure dispatch — call a closure's captured function.
+                        if let Some(o) = o
+                            && let ManagedObject::Closure(cl) = &o.obj
+                        {
+                            let func_idx = cl.func_index as usize;
+                            let captures = cl.captures.clone();
+                            let args_regs = &*box_data.args_regs;
+                            let total_args = captures.len() + args_regs.len();
+                            let func = &ctx.functions[func_idx];
+                            if total_args != func.params_count {
+                                return Err(JitError::runtime(
+                                    format!("Closure arity mismatch: expected {}, got {}", func.params_count, total_args),
+                                    loc.line as usize, loc.col as usize,
+                                ));
+                            }
+                            let ret = dst.map(|d| ReturnTarget { dst: d });
+                            frames.last_mut().unwrap().pc += 1;
+                            let mut callee_regs = make_registers(func.locals_count);
+                            for (i, v) in captures.iter().enumerate() {
+                                callee_regs[i] = *v;
+                            }
+                            for (i, &r) in args_regs.iter().enumerate() {
+                                callee_regs[captures.len() + i] = frames.last_mut().unwrap().registers[r];
+                            }
+                            frames.push(CallFrame {
+                                instructions: InstrPtr::from_arc(&func.instructions),
+                                registers: callee_regs,
+                                pc: 0,
+                                return_to: ret,
+                            });
+                            continue;
                         }
                     }
 

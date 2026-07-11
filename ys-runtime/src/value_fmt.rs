@@ -32,6 +32,9 @@ pub fn stringify_value(ctx: &Context, val: Value) -> String {
                         .unwrap_or("");
                     format!("<bound method {} of {}>", method, stringify_value(ctx, *receiver))
                 }
+                ManagedObject::Closure(cl) => {
+                    format!("<Closure#{}>", cl.func_index)
+                }
             };
         }
         return "null".into();
@@ -85,6 +88,7 @@ fn stringify_nested(ctx: &Context, val: Value) -> String {
                 ManagedObject::Timestamp(_)   => "Timestamp(...)".into(),
                 ManagedObject::Range { .. }   => "Range(...)".into(),
                 ManagedObject::BoundMethod { .. } => "BoundMethod(...)".into(),
+                ManagedObject::Closure(_) => "Closure(...)".into(),
             };
         }
         return "null".into();

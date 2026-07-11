@@ -194,6 +194,10 @@ pub enum Instruction {
     /// Write a property to an object by interned name ID.
     ObjectSet { obj: usize, name_id: u32, src: usize, loc: Loc },
 
+    //  Closures 
+    /// Create a closure that captures current register values.
+    MakeClosure { dst: usize, func_index: usize, captures: Arc<[usize]> },
+
     //  Calls 
     /// Call a statically-known function by its string-pool name ID.
     Call(Box<CallData>),

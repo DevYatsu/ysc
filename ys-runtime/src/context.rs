@@ -1,7 +1,7 @@
 use crate::heap::{Heap, ManagedObject};
 use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
-use ys_core::compiler::Value;
+use ys_core::compiler::{UserFunction, Value};
 
 //  Backend trait 
 
@@ -47,6 +47,9 @@ pub struct Context {
     pub string_pool: Arc<[Arc<str>]>,
     pub globals:    Arc<[AtomicU64]>,
     pub callables:  rustc_hash::FxHashMap<u32, Callable>,
+    /// All compiled user-defined functions, indexed by position in the
+    /// original `Program.functions` array.
+    pub functions:  Arc<[UserFunction]>,
 }
 
 impl Context {

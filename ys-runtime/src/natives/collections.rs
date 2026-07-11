@@ -30,7 +30,8 @@ pub fn register(fns: &mut FxHashMap<String, NativeFn>) {
                             if *step == 0.0 { 0.0 }
                             else { ((end - start) / step).ceil().max(0.0) }
                         }
-                        ManagedObject::Timestamp(_) | ManagedObject::BoundMethod { .. } => 0.0,
+                        ManagedObject::Timestamp(_) | ManagedObject::BoundMethod { .. }
+                        | ManagedObject::Closure(_) => 0.0,
                     }));
                 }
             } else if let Some(s) = ctx.value_as_string(val) {

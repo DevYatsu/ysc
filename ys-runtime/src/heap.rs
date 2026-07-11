@@ -47,6 +47,12 @@ impl<T> SyncCell<T> {
 
 // ── Object variants ───────────────────────────────────────────────────────────
 
+/// A closure — a function bundled with its captured environment.
+pub struct Closure {
+    pub func_index: u32,
+    pub captures: Vec<Value>,
+}
+
 /// Every kind of value that lives on the heap.
 pub enum ManagedObject {
     /// A heap-allocated string (longer than 6 bytes).
@@ -61,6 +67,8 @@ pub enum ManagedObject {
     Range { start: f64, end: f64, step: f64 },
     /// A method reference bound to a receiver (e.g. `list.pad`).
     BoundMethod { receiver: Value, name_id: u32 },
+    /// A closure bundling a function index with captured values.
+    Closure(Closure),
 }
 
 impl ManagedObject {
@@ -84,6 +92,13 @@ impl ManagedObject {
             }
             ManagedObject::BoundMethod { receiver, .. } => {
                 if let Some(id) = receiver.as_obj_id() { f(id); }
+            }
+            ManagedObject::Closure(cl) => {
+                for v in cl.captures.iter() {
+                    if let Some(id) = v.as_obj_id() {
+                        f(id);
+                    }
+                }
             }
             // Leaf types — no children.
             ManagedObject::String(_) | ManagedObject::Timestamp(_)
