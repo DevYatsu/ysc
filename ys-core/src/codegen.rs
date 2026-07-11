@@ -656,16 +656,10 @@ impl Codegen {
             func.locals.insert(p.clone(), VarInfo { idx: i, is_global: false });
             func.next_reg = i + 1;
         }
-        // Determine captures: variables referenced from enclosing scope.
-        // Simple approach: all free variables at parse time become captures.
-        // For now, we compile the closure body and collect the captures
-        // by checking which identifiers aren't local params.
         let captures: Vec<String> = Vec::new(); // TODO: free-variable analysis
-        if let Err(e) = func.compile_node(body) {
-            func.emit(Instruction::Return(None));
-        }
+        let result_reg = func.compile_node(body).unwrap_or(0);
         if !matches!(func.instructions.last(), Some(Instruction::Return(_))) {
-            func.emit(Instruction::Return(None));
+            func.emit(Instruction::Return(Some(result_reg)));
         }
         let func_idx = self.functions.len();
         let name_id = self.intern(&format!("__closure_{}", func_idx));

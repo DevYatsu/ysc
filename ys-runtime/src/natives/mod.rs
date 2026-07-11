@@ -5,6 +5,7 @@
 
 pub mod collections;
 pub mod io;
+pub mod list_ops;
 pub mod net;
 pub mod time;
 
@@ -15,6 +16,7 @@ use rustc_hash::FxHashMap;
 pub fn register(fns: &mut FxHashMap<String, NativeFn>) {
     io::register(fns);
     collections::register(fns);
+    list_ops::register(fns);
     time::register(fns);
     net::register(fns);
 }

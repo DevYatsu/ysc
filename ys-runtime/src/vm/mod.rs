@@ -785,6 +785,48 @@ pub fn execute_bytecode<'a>(
                                     frames[fi].pc += 1;
                                     continue;
                                 }
+
+                            // ── List method dispatch (map / filter / reduce) ──
+                            if let Some(list_oid) = receiver.as_obj_id() {
+                                let maybe_list = {
+                                    let objects = ctx.heap.objects.get();
+                                    objects.get(list_oid as usize)
+                                        .and_then(|o| o.as_ref())
+                                        .map(|o| &o.obj)
+                                        .and_then(|obj| if let ManagedObject::List(elems) = obj { Some(elems.clone()) } else { None })
+                                };
+                                if let Some(elems) = maybe_list {
+                                    let args_regs = &*box_data.args_regs;
+                                    let closure_val = args_regs.first().map(|&r| frames[fi].registers[r]).unwrap_or(Value::from_bits(0));
+                                    let result = if method == "map" {
+                                        let mut out = Vec::with_capacity(elems.len());
+                                        for v in elems {
+                                            let v = crate::context::Context::call_closure(&ctx, closure_val, vec![v], loc).await?;
+                                            out.push(v);
+                                        }
+                                        ctx.alloc(ManagedObject::List(out))
+                                    } else if method == "filter" {
+                                        let mut out = Vec::new();
+                                        for v in elems {
+                                            let keep = crate::context::Context::call_closure(&ctx, closure_val, vec![v], loc).await?;
+                                            if keep.is_truthy() { out.push(v); }
+                                        }
+                                        ctx.alloc(ManagedObject::List(out))
+                                    } else if method == "reduce" && args_regs.len() >= 2 {
+                                        let initial = frames[fi].registers[args_regs[0]];
+                                        let closure_val = frames[fi].registers[args_regs[1]];
+                                        let mut acc = initial;
+                                        for v in elems {
+                                            acc = crate::context::Context::call_closure(&ctx, closure_val, vec![acc, v], loc).await?;
+                                        }
+                                        acc
+                                    } else { frames[fi].pc += 1; continue; };
+                                    if let Some(d) = dst { frames[fi].registers[d] = result; }
+                                    frames[fi].pc += 1;
+                                    continue;
+                                }
+                            }
+
                             return Err(JitError::runtime(format!("Unknown method '{}'", method), loc.line as usize, loc.col as usize));
                         }
 
