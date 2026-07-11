@@ -9,7 +9,17 @@ use crate::token_stream::TokenStream;
 use crate::unescape::unescape_string;
 
 // Re-export helpers from the existing parser where they are pure grammar helpers.
-pub(crate) use crate::parser::is_stmt_end;
+/// Check whether a token ends a statement (newlines, braces, commas, parens).
+/// Used to determine if a `return` or other keyword has an operand on the same line.
+pub(crate) fn is_stmt_end(t: Option<Token<'_>>) -> bool {
+    matches!(
+        t,
+        None | Some(Token::Newline)
+            | Some(Token::RBrace)
+            | Some(Token::Comma)
+            | Some(Token::RParen)
+    )
+}
 
 /// Recursive‑descent parser that produces an AST.
 pub struct AstParser<'source> {

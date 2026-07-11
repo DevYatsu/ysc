@@ -16,14 +16,10 @@ pub mod compiler;
 pub mod error;
 pub mod lexer;
 pub mod optimizer;
-pub mod parser;
 pub mod token_stream;
-pub mod template;
 pub mod unescape;
 
 // Re-export the most-used types at the crate root for convenience.
 pub use compiler::Program;
 pub use error::JitError;
 pub use lexer::Token;
-pub use parser::Parser;
-pub use unescape::unescape_string;
