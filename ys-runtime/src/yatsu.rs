@@ -19,6 +19,27 @@ use crate::vm::execute_bytecode;
 use ys_core::compiler::{Loc, Value};
 use ys_core::error::JitError;
 
+// ── Value type name (for error messages) ──────────────────────────────────────
+
+/// Return a human-readable type name for a Value (like Lua's `type()`).
+pub fn value_type_name(val: &Value) -> &'static str {
+    if val.as_number().is_some() { "number" }
+    else if val.as_bool().is_some() { "boolean" }
+    else if val.as_sso_str().is_some() { "string" }
+    else if val.as_obj_id().is_some() { "object" }
+    else { "nil" }
+}
+
+/// Build a descriptive error message, e.g.
+/// `"bad argument #1 to 'add' (expected number, got string)"`.
+pub fn bad_arg(idx: usize, func_name: &str, expected: &str, got: &Value) -> JitError {
+    JitError::runtime(
+        format!("bad argument #{} to '{}' (expected {}, got {})",
+            idx + 1, func_name, expected, value_type_name(got)),
+        0, 0,
+    )
+}
+
 // ── FromLua / ToLua ───────────────────────────────────────────────────────────
 
 /// Types that can be created from a YatsuScript [`Value`].
@@ -31,7 +52,60 @@ pub trait ToLua {
     fn to_lua(self, ctx: &Context) -> Result<Value, JitError>;
 }
 
-// Implementations for primitive types
+/// Extension trait for `FromLua` that reads from argument slices (for
+/// typed function registration).  Called internally by [`Yatsu::register_fn`].
+pub trait FromLuaSlice: Sized {
+    fn from_lua_slice(args: &[Value], func_name: &str, ctx: &Context) -> Result<Self, JitError>;
+}
+
+// ── FromLuaSlice implementations for tuples ────────────────────────────────────
+
+impl<A: FromLua> FromLuaSlice for (A,) {
+    fn from_lua_slice(args: &[Value], func_name: &str, ctx: &Context) -> Result<Self, JitError> {
+        if args.is_empty() {
+            return Err(JitError::runtime(format!(
+                "bad argument #1 to '{}' (expected at least 1 argument, got 0)", func_name), 0, 0));
+        }
+        let a = A::from_lua(args[0], ctx)
+            .map_err(|_| bad_arg(0, func_name, std::any::type_name::<A>(), &args[0]))?;
+        Ok((a,))
+    }
+}
+
+impl<A: FromLua, B: FromLua> FromLuaSlice for (A, B) {
+    fn from_lua_slice(args: &[Value], func_name: &str, ctx: &Context) -> Result<Self, JitError> {
+        if args.len() < 2 {
+            return Err(JitError::runtime(format!(
+                "bad argument #{} to '{}' (expected at least 2 arguments, got {})",
+                args.len() + 1, func_name, args.len()), 0, 0));
+        }
+        let a = A::from_lua(args[0], ctx)
+            .map_err(|_| bad_arg(0, func_name, std::any::type_name::<A>(), &args[0]))?;
+        let b = B::from_lua(args[1], ctx)
+            .map_err(|_| bad_arg(1, func_name, std::any::type_name::<B>(), &args[1]))?;
+        Ok((a, b))
+    }
+}
+
+impl<A: FromLua, B: FromLua, C: FromLua> FromLuaSlice for (A, B, C) {
+    fn from_lua_slice(args: &[Value], func_name: &str, ctx: &Context) -> Result<Self, JitError> {
+        if args.len() < 3 {
+            return Err(JitError::runtime(format!(
+                "bad argument #{} to '{}' (expected at least 3 arguments, got {})",
+                args.len() + 1, func_name, args.len()), 0, 0));
+        }
+        let a = A::from_lua(args[0], ctx)
+            .map_err(|_| bad_arg(0, func_name, std::any::type_name::<A>(), &args[0]))?;
+        let b = B::from_lua(args[1], ctx)
+            .map_err(|_| bad_arg(1, func_name, std::any::type_name::<B>(), &args[1]))?;
+        let c = C::from_lua(args[2], ctx)
+            .map_err(|_| bad_arg(2, func_name, std::any::type_name::<C>(), &args[2]))?;
+        Ok((a, b, c))
+    }
+}
+
+// ── Implementations for primitive types ────────────────────────────────────────
+
 impl FromLua for f64 {
     fn from_lua(val: Value, _ctx: &Context) -> Result<Self, JitError> {
         val.as_number().ok_or_else(|| JitError::runtime("expected number", 0, 0))
@@ -236,6 +310,29 @@ impl Yatsu {
             self.ctx.callables.get_mut().insert(pos as u32, Callable::Native(nf));
         }
         self.function_names.push(name.to_string());
+    }
+
+    /// Register a typed function with automatic argument validation.
+    ///
+    /// Arguments are automatically extracted from the [`Value`] slice via
+    /// [`FromLuaSlice`].  On type mismatch a descriptive error is returned
+    /// (e.g. `"bad argument #1 to 'add' (expected f64, got string)"`).
+    ///
+    /// ```
+    /// ys.register_fn("add", |(a, b): (f64, f64)| Ok(a + b));
+    /// ys.register_fn("hello", |_args: ()| Ok("hello world".to_string()));
+    /// ```
+    pub fn register_fn<A, R>(&mut self, name: &str, f: impl Fn(A) -> Result<R, JitError> + Send + Sync + 'static)
+    where
+        A: FromLuaSlice + Send + 'static,
+        R: ToLua + Send + 'static,
+    {
+        let func_name = name.to_string();
+        self.register(name, move |ctx, args| {
+            let params = A::from_lua_slice(args, &func_name, ctx)?;
+            let result = f(params)?;
+            result.to_lua(ctx)
+        });
     }
 
     // ── Helpers ─────────────────────────────────────────────────────────────
