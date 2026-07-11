@@ -671,6 +671,7 @@ impl<'source> Parser<'source> {
                 break;
             }
         }
+        self.stream.skip_newlines();
         self.stream.expect(Token::RBrace)?;
         instructions.extend(body);
 
@@ -761,6 +762,7 @@ impl<'source> Parser<'source> {
                 break;
             }
         }
+        self.stream.skip_newlines();
         self.stream.expect(Token::RBrace)?;
         instructions.extend(body);
 
@@ -1022,7 +1024,7 @@ impl<'source> Parser<'source> {
         let mut lhs = self.parse_unary_expr(instructions)?;
         while let Some(op) = self.stream.peek() {
             let instr = match op {
-                Token::Mul | Token::Div => {
+                Token::Mul | Token::Div | Token::Mod => {
                     self.stream.advance()?;
                     let loc = self.stream.loc();
                     let rhs = self.parse_unary_expr(instructions)?;
@@ -1030,6 +1032,7 @@ impl<'source> Parser<'source> {
                     match op {
                         Token::Mul => Instruction::Mul { dst, lhs, rhs, loc },
                         Token::Div => Instruction::Div { dst, lhs, rhs, loc },
+                        Token::Mod => Instruction::Mod { dst, lhs, rhs, loc },
                         _ => unreachable!(),
                     }
                 }
@@ -1038,7 +1041,7 @@ impl<'source> Parser<'source> {
             instructions.push(instr);
             lhs = if let Some(ins) = instructions.last() {
                 match ins {
-                    Instruction::Mul { dst, .. } | Instruction::Div { dst, .. } => *dst,
+                    Instruction::Mul { dst, .. } | Instruction::Div { dst, .. } | Instruction::Mod { dst, .. } => *dst,
                     _ => unreachable!(),
                 }
             } else {
@@ -1522,20 +1525,52 @@ impl<'source> Parser<'source> {
         &mut self,
         instructions: &mut Vec<Instruction>,
     ) -> Result<usize, JitError> {
-        let mut elements = Vec::new();
         self.stream.skip_newlines();
-        if !matches!(self.stream.peek(), Some(Token::RBracket)) {
-            loop {
-                self.stream.skip_newlines();
-                elements.push(self.parse_expression(instructions)?);
-                self.stream.skip_newlines();
-                if matches!(self.stream.peek(), Some(Token::Comma)) {
-                    self.stream.advance()?;
-                    if matches!(self.stream.peek(), Some(Token::RBracket)) {
+        if matches!(self.stream.peek(), Some(Token::RBracket)) {
+            // `[]`
+            self.stream.advance()?;
+            let dst = self.alloc_reg();
+            instructions.push(Instruction::NewList { dst, len: 0 });
+            return Ok(dst);
+        }
+
+        // Parse first element
+        let first = self.parse_expression(instructions)?;
+        self.stream.skip_newlines();
+
+        // Check for `;` repetition syntax: `[val; count]`
+        if matches!(self.stream.peek(), Some(Token::Semicolon)) {
+            self.stream.advance()?;
+            self.stream.skip_newlines();
+            let count = self.parse_expression(instructions)?;
+            self.stream.skip_newlines();
+            self.stream.expect(Token::RBracket)?;
+            let dst = self.alloc_reg();
+            instructions.push(Instruction::NewListRepeat {
+                dst,
+                val: first,
+                count,
+            });
+            return Ok(dst);
+        }
+
+        // Normal list literal: `[val, val, ...]`
+        let mut elements = vec![first];
+        if matches!(self.stream.peek(), Some(Token::Comma)) {
+            self.stream.advance()?;
+            self.stream.skip_newlines();
+            if !matches!(self.stream.peek(), Some(Token::RBracket)) {
+                loop {
+                    elements.push(self.parse_expression(instructions)?);
+                    self.stream.skip_newlines();
+                    if matches!(self.stream.peek(), Some(Token::Comma)) {
+                        self.stream.advance()?;
+                        if matches!(self.stream.peek(), Some(Token::RBracket)) {
+                            break;
+                        }
+                    } else {
                         break;
                     }
-                } else {
-                    break;
                 }
             }
         }

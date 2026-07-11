@@ -159,6 +159,8 @@ pub enum Instruction {
     Mul { dst: usize, lhs: usize, rhs: usize, loc: Loc },
     /// Divide two numbers.
     Div { dst: usize, lhs: usize, rhs: usize, loc: Loc },
+    /// Modulus of two numbers.
+    Mod { dst: usize, lhs: usize, rhs: usize, loc: Loc },
     /// Logical NOT of a value.
     Not { dst: usize, src: usize, loc: Loc },
     /// Atomic increment of a local register (expected to contain a number).
@@ -186,6 +188,8 @@ pub enum Instruction {
     ListSet { list: usize, index_reg: usize, src: usize, loc: Loc },
     /// Create a new object (hash map) on the heap.
     NewObject { dst: usize, capacity: usize },
+    /// Create a list by repeating a value N times (Rust-style `[val; count]`).
+    NewListRepeat { dst: usize, val: usize, count: usize },
     /// Create an object from pre‑evaluated name→value pairs (object literal).
     /// Replaces the pattern `NewObject` + N×`ObjectSet`.
     NewObjectFrom { dst: usize, fields: Arc<[(u32, usize)]> },

@@ -547,6 +547,10 @@ pub fn execute_bytecode<'a>(
                     numeric_bin!(&mut frames.last_mut().unwrap().registers, *dst, *lhs, *rhs, /, *loc);
                     frames.last_mut().unwrap().pc += 1;
                 }
+                Instruction::Mod { dst, lhs, rhs, loc } => {
+                    numeric_bin!(&mut frames.last_mut().unwrap().registers, *dst, *lhs, *rhs, %, *loc);
+                    frames.last_mut().unwrap().pc += 1;
+                }
                 Instruction::Not { dst, src, .. } => {
                     let d = *dst;
                     frames.last_mut().unwrap().registers[d] =
@@ -558,13 +562,13 @@ pub fn execute_bytecode<'a>(
                 Instruction::Eq { dst, lhs, rhs } => {
                     let lv = frames.last_mut().unwrap().registers[*lhs];
                     let rv = frames.last_mut().unwrap().registers[*rhs];
-                    frames.last_mut().unwrap().registers[*dst] = Value::bool(eq_fast(&ctx, lv.to_bits(), rv.to_bits()));
+                    frames.last_mut().unwrap().registers[*dst] = Value::bool(lv.to_bits() == rv.to_bits() && (lv.to_bits() & QNAN) != QNAN);
                     frames.last_mut().unwrap().pc += 1;
                 }
                 Instruction::Ne { dst, lhs, rhs } => {
                     let lv = frames.last_mut().unwrap().registers[*lhs];
                     let rv = frames.last_mut().unwrap().registers[*rhs];
-                    frames.last_mut().unwrap().registers[*dst] = Value::bool(!eq_fast(&ctx, lv.to_bits(), rv.to_bits()));
+                    frames.last_mut().unwrap().registers[*dst] = Value::bool(lv.to_bits() != rv.to_bits() || (lv.to_bits() & QNAN) == QNAN);
                     frames.last_mut().unwrap().pc += 1;
                 }
                 Instruction::Lt { dst, lhs, rhs, loc } => {
@@ -635,6 +639,14 @@ pub fn execute_bytecode<'a>(
                 }
                 Instruction::NewListFrom { dst, elems } => {
                     let vals: Vec<Value> = elems.iter().map(|&r| frames.last_mut().unwrap().registers[r]).collect();
+                    frames.last_mut().unwrap().registers[*dst] =
+                        ctx.alloc(ManagedObject::List(vals));
+                    frames.last_mut().unwrap().pc += 1;
+                }
+                Instruction::NewListRepeat { dst, val, count } => {
+                    let v = frames.last_mut().unwrap().registers[*val];
+                    let n = frames.last_mut().unwrap().registers[*count].as_number().unwrap_or(0.0) as usize;
+                    let vals = vec![v; n];
                     frames.last_mut().unwrap().registers[*dst] =
                         ctx.alloc(ManagedObject::List(vals));
                     frames.last_mut().unwrap().pc += 1;
@@ -749,21 +761,7 @@ pub fn execute_bytecode<'a>(
                             let method = ctx.string_pool.get(*name_id as usize).map(|s| s.as_ref()).unwrap_or("");
                             let receiver = *receiver;
 
-                            if method == "pad" {
-                                if let Some(list_oid) = receiver.as_obj_id() {
-                                    let args_regs = &*box_data.args_regs;
-                                    let n = args_regs.first().map(|&r| frames.last_mut().unwrap().registers[r].as_number().unwrap_or(0.0) as usize).unwrap_or(0);
-                                    let fill = args_regs.get(1).map(|&r| frames.last_mut().unwrap().registers[r]).unwrap_or(Value::from_bits(0));
-                                    let heap = ctx.heap.objects.get_mut();
-                                    if let Some(Some(lo)) = heap.get_mut(list_oid as usize)
-                                        && let ManagedObject::List(elems) = &mut lo.obj
-                                    {
-                                        if elems.len() < n { elems.resize(n, fill); }
-                                    }
-                                }
-                                frames.last_mut().unwrap().pc += 1;
-                                continue;
-                            } else if method == "step"
+                            if method == "step"
                                 && let Some(r_oid) = receiver.as_obj_id() {
                                     let (start, end) = {
                                         let heap = ctx.heap.objects.get();

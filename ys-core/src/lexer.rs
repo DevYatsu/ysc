@@ -154,6 +154,9 @@ pub enum Token<'source> {
     /// ',' separator.
     #[token(",")]
     Comma,
+    /// ';' separator for list repetition syntax `[val; count]`.
+    #[token(";")]
+    Semicolon,
     /// '.' operator for object property access.
     #[token(".")]
     Dot,
@@ -172,6 +175,9 @@ pub enum Token<'source> {
     /// '/' operator.
     #[token("/")]
     Div,
+    /// '%' modulus operator.
+    #[token("%")]
+    Mod,
     /// '==' equality operator (before '=').
     #[token("==")]
     Eq,
