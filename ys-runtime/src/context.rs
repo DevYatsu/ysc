@@ -190,5 +190,7 @@ impl Context {
             registers[cl.captures.len() + i] = *v;
         }
         crate::vm::execute_bytecode(&func.instructions, Arc::clone(ctx), registers).await
-    }
+
+}
+
 }
