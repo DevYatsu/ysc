@@ -13,7 +13,7 @@ use ys_core::compiler::{Program, Value};
 use ys_core::error::JitError;
 
 /// Bootstraps the interpreter environment and executes the program.
-pub async fn run_interpreter(program: Program) -> Result<(), JitError> {
+pub fn run_interpreter(program: Program) -> Result<(), JitError> {
     // 1. Collect all native functions.
     let mut native_fns = FxHashMap::default();
     natives::register(&mut native_fns);
@@ -77,7 +77,7 @@ pub async fn run_interpreter(program: Program) -> Result<(), JitError> {
     let main_regs = make_registers(program.locals_count);
 
     // 5. Execute the main bytecode block.
-    execute_bytecode(&program.instructions, ctx.clone(), main_regs).await?;
+    execute_bytecode(&program.instructions, ctx.clone(), main_regs)?;
 
     Ok(())
 }

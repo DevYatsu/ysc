@@ -6,13 +6,13 @@ use ys_core::codegen::Codegen;
 use ys_runtime::{run_interpreter, Interpreter};
 
 /// Run a script file.
-pub async fn run_file(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+pub fn run_file(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let source = fs::read_to_string(path)?;
-    run_source(&source).await
+    run_source(&source)
 }
 
 /// Syntax-check a script file or directory.
-pub async fn check_file(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+pub fn check_file(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
     if path.is_dir() {
         let mut count = 0;
         let mut errors = 0;
@@ -21,7 +21,7 @@ pub async fn check_file(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
             let p = entry.path();
             if p.extension().is_some_and(|e| e == "ys") {
                 count += 1;
-                if let Err(e) = check_source_internal(&fs::read_to_string(&p)?, Some(&p)).await {
+                if let Err(e) = check_source_internal(&fs::read_to_string(&p)?, Some(&p)) {
                     errors += 1;
                     if let Some(je) = e.downcast_ref::<ys_core::error::JitError>() {
                         crate::error_display::display_error(je, &fs::read_to_string(&p)?);
@@ -38,11 +38,11 @@ pub async fn check_file(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
         Ok(())
     } else {
         let source = fs::read_to_string(path)?;
-        check_source_internal(&source, Some(path)).await
+        check_source_internal(&source, Some(path))
     }
 }
 
-async fn check_source_internal(source: &str, path: Option<&Path>) -> Result<(), Box<dyn std::error::Error>> {
+fn check_source_internal(source: &str, path: Option<&Path>) -> Result<(), Box<dyn std::error::Error>> {
     let _program = Codegen::compile(source)?;
     if let Some(p) = path {
         println!("{}: OK", p.display());
@@ -51,7 +51,7 @@ async fn check_source_internal(source: &str, path: Option<&Path>) -> Result<(), 
 }
 
 /// Run source code directly.
-pub async fn run_source(source: &str) -> Result<(), Box<dyn std::error::Error>> {
+pub fn run_source(source: &str) -> Result<(), Box<dyn std::error::Error>> {
     let start = Instant::now();
 
     let program = Codegen::compile(source)?;
@@ -59,7 +59,7 @@ pub async fn run_source(source: &str) -> Result<(), Box<dyn std::error::Error>> 
     let elapsed_compile = start.elapsed();
     
     let start_run = Instant::now();
-    run_interpreter(program).await?;
+    run_interpreter(program)?;
     let elapsed_run = start_run.elapsed();
 
     println!("\nDone in {:?} (compile: {:?}, run: {:?})", start.elapsed(), elapsed_compile, elapsed_run);
@@ -68,7 +68,7 @@ pub async fn run_source(source: &str) -> Result<(), Box<dyn std::error::Error>> 
 }
 
 /// Start an interactive REPL session.
-pub async fn run_repl() -> Result<(), Box<dyn std::error::Error>> {
+pub fn run_repl() -> Result<(), Box<dyn std::error::Error>> {
     let mut rl = rustyline::DefaultEditor::new()?;
     let _runtime = Interpreter;
 
@@ -90,7 +90,7 @@ pub async fn run_repl() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 };
 
-                if let Err(e) = run_interpreter(program).await {
+                if let Err(e) = run_interpreter(program) {
                     crate::error_display::display_error(&e, &line);
                 }
             }

@@ -36,10 +36,8 @@ pub use crate::context::Backend;
 pub struct Interpreter;
 
 impl Backend for Interpreter {
-    fn run(&self, program: ys_core::compiler::Program)
-        -> Pin<Box<dyn Future<Output = Result<(), JitError>> + Send>>
-    {
-        Box::pin(async move { run_interpreter(program).await })
+    fn run(&self, program: ys_core::compiler::Program) -> Result<(), JitError> {
+        run_interpreter(program)
     }
 }
 
@@ -408,12 +406,11 @@ fn set_current_frames(frames: &Vec<CallFrame>) {
 
 // ── Main dispatch loop ────────────────────────────────────────────────────────
 
-pub fn execute_bytecode<'a>(
-    instructions: &'a Arc<[Instruction]>,
+pub fn execute_bytecode(
+    instructions: &Arc<[Instruction]>,
     ctx:          Arc<Context>,
     registers:    Vec<Value>,
-) -> Pin<Box<dyn Future<Output = Result<Value, JitError>> + Send + 'a>> {
-    Box::pin(async move {
+) -> Result<Value, JitError> {
 // ── Frame stack ───────────────────────────────────────────────────
         let mut frames = vec![CallFrame {
             instructions: InstrPtr::from_arc(instructions),
@@ -736,7 +733,7 @@ pub fn execute_bytecode<'a>(
                         Callable::Native(nf) => {
                             let args_regs = box_data.args_regs.clone();
                             let args: Vec<Value> = args_regs.iter().map(|&r| frames[fi].registers[r]).collect();
-                            let res = nf(ctx.clone(), args, loc).await?;
+                            let res = nf(&ctx, &args)?;
                             if let Some(d) = dst { frames[fi].registers[d] = res; }
                             frames[fi].pc += 1;
                         }
@@ -805,14 +802,14 @@ pub fn execute_bytecode<'a>(
                                         "map" => {
                                             let mut out = Vec::with_capacity(elems.len());
                                             for v in elems {
-                                                out.push(crate::context::Context::call_closure(&ctx, read(0), vec![v], loc).await?);
+                                                out.push(Context::call_closure(&ctx, read(0), vec![v], loc)?);
                                             }
                                             ctx.alloc(ManagedObject::List(out))
                                         }
                                         "filter" => {
                                             let mut out = Vec::new();
                                             for v in elems {
-                                                if crate::context::Context::call_closure(&ctx, read(0), vec![v], loc).await?.is_truthy() { out.push(v); }
+                                                if Context::call_closure(&ctx, read(0), vec![v], loc)?.is_truthy() { out.push(v); }
                                             }
                                             ctx.alloc(ManagedObject::List(out))
                                         }
@@ -821,39 +818,39 @@ pub fn execute_bytecode<'a>(
                                             let cl = read(1);
                                             let mut acc = init;
                                             for v in elems {
-                                                acc = crate::context::Context::call_closure(&ctx, cl, vec![acc, v], loc).await?;
+                                                acc = Context::call_closure(&ctx, cl, vec![acc, v], loc)?;
                                             }
                                             acc
                                         }
                                         "each" => {
-                                            for v in elems { crate::context::Context::call_closure(&ctx, read(0), vec![v], loc).await?; }
+                                            for v in elems { Context::call_closure(&ctx, read(0), vec![v], loc)?; }
                                             receiver
                                         }
                                         "find" => {
                                             let mut found = Value::from_bits(0);
                                             for v in elems {
-                                                if crate::context::Context::call_closure(&ctx, read(0), vec![v], loc).await?.is_truthy() { found = v; break; }
+                                                if Context::call_closure(&ctx, read(0), vec![v], loc)?.is_truthy() { found = v; break; }
                                             }
                                             found
                                         }
                                         "some" => {
                                             let mut r = Value::bool(false);
                                             for v in elems {
-                                                if crate::context::Context::call_closure(&ctx, read(0), vec![v], loc).await?.is_truthy() { r = Value::bool(true); break; }
+                                                if Context::call_closure(&ctx, read(0), vec![v], loc)?.is_truthy() { r = Value::bool(true); break; }
                                             }
                                             r
                                         }
                                         "every" => {
                                             let mut r = Value::bool(true);
                                             for v in elems {
-                                                if !crate::context::Context::call_closure(&ctx, read(0), vec![v], loc).await?.is_truthy() { r = Value::bool(false); break; }
+                                                if !Context::call_closure(&ctx, read(0), vec![v], loc)?.is_truthy() { r = Value::bool(false); break; }
                                             }
                                             r
                                         }
                                         "flat_map" => {
                                             let mut out = Vec::new();
                                             for v in elems {
-                                                let mapped = crate::context::Context::call_closure(&ctx, read(0), vec![v], loc).await?;
+                                                let mapped = Context::call_closure(&ctx, read(0), vec![v], loc)?;
                                                 if let Some(oid) = mapped.as_obj_id() {
                                                     let objects = ctx.heap.objects.get();
                                                     if let Some(ManagedObject::List(inner)) = objects.get(oid as usize).and_then(|o| o.as_ref()).map(|o| &o.obj) {
@@ -985,7 +982,7 @@ pub fn execute_bytecode<'a>(
                         Callable::Native(nf) => {
                             let args_regs = box_data.args_regs.clone();
                             let args: Vec<Value> = args_regs.iter().map(|&r| frames[fi].registers[r]).collect();
-                            let res = nf(ctx.clone(), args, loc).await?;
+                            let res = nf(&ctx, &args)?;
                             if let Some(d) = dst { frames[fi].registers[d] = res; }
                             frames[fi].pc += 1;
                         }
@@ -1007,5 +1004,4 @@ pub fn execute_bytecode<'a>(
             }
 
         }
-    })
 }

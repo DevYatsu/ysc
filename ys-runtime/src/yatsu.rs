@@ -207,13 +207,11 @@ impl Yatsu {
     /// assert_eq!(sum, 3.0);
     /// ```
     pub fn exec<R: FromLua>(&mut self, source: &str) -> Result<R, JitError> {
-        let runtime = tokio::runtime::Runtime::new()
-            .map_err(|e| JitError::runtime(format!("runtime error: {}", e), 0, 0))?;
-        runtime.block_on(self.exec_async(source))
+        self.exec_async(source)
     }
 
     /// Async version of [`exec`](Self::exec).
-    pub async fn exec_async<R: FromLua>(&mut self, source: &str) -> Result<R, JitError> {
+    pub fn exec_async<R: FromLua>(&mut self, source: &str) -> Result<R, JitError> {
         let program = ys_core::codegen::Codegen::compile(source)?;
 
         // Register user-defined functions from the compiled program
@@ -232,7 +230,7 @@ impl Yatsu {
             &program.instructions,
             Arc::clone(&self.ctx),
             registers,
-        ).await?;
+        )?;  // sync
 
         R::from_lua(result, &self.ctx)
     }
@@ -297,11 +295,9 @@ impl Yatsu {
         F: Fn(&Context, &[Value]) -> Result<Value, JitError> + Send + Sync + 'static,
     {
         let wrapped = Arc::new(f);
-        let nf: crate::context::NativeFn = Arc::new(move |ctx, args, loc| {
+        let nf: crate::context::NativeFn = Arc::new(move |ctx, args| {
             let w = Arc::clone(&wrapped);
-            Box::pin(async move {
-                w(&ctx, &args)
-            })
+            w(ctx.as_ref(), args)
         });
         let callable = Callable::Native(Arc::clone(&nf));
         self.ctx.callables_by_name.get_mut().insert(name.to_string(), callable);
@@ -412,9 +408,9 @@ impl ModuleBuilder {
         F: Fn(&Context, &[Value]) -> Result<Value, JitError> + Send + Sync + 'static,
     {
         let wrapped = Arc::new(f);
-        let nf: crate::context::NativeFn = Arc::new(move |ctx, args, loc| {
+        let nf: crate::context::NativeFn = Arc::new(move |ctx, args| {
             let w = Arc::clone(&wrapped);
-            Box::pin(async move { w(&ctx, &args) })
+            w(ctx.as_ref(), args)
         });
         self.functions.push((name.to_string(), nf));
     }

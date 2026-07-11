@@ -2,8 +2,6 @@ use crate::heap::{Closure, Heap, ManagedObject, SyncCell};
 use std::sync::Arc;
 use ys_core::compiler::{Loc, Value};
 use rustc_hash::FxHashMap;
-use std::future::Future;
-use std::pin::Pin;
 
 use ys_core::error::JitError;
 
@@ -15,21 +13,16 @@ use ys_core::error::JitError;
 /// to be swapped out while using the same shared context and heap.
 pub trait Backend: Send + Sync {
     /// Execute a compiled program.
-    fn run(&self, program: ys_core::compiler::Program)
-        -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), ys_core::error::JitError>> + Send>>;
+    fn run(&self, program: ys_core::compiler::Program) -> Result<(), JitError>;
 }
 
 // ── Shared Execution State ───────────────────────────────────────────────────
 
 /// Store for native function implementations.
+/// Synchronous native function — no async overhead.
+/// For async I/O (fetch/serve) use a separate mechanism.
 pub type NativeFn = Arc<
-    dyn Fn(
-        Arc<Context>,
-        Vec<Value>,
-        ys_core::compiler::Loc,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value, ys_core::error::JitError>> + Send>>
-    + Send
-    + Sync,
+    dyn Fn(&Arc<Context>, &[Value]) -> Result<Value, JitError> + Send + Sync,
 >;
 
 /// Any object that can be called (either a user-defined function or a native builtin).
@@ -113,12 +106,8 @@ impl Context {
     /// Register a native function so scripts can call it by name.
     ///
     /// This is the primary API for embedding YatsuScript in games and apps.
-    pub fn register<F, Fut>(&mut self, name: &str, f: F)
-    where
-        F: Fn(Arc<Context>, Vec<Value>, Loc) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<Value, JitError>> + Send + 'static,
-    {
-        let nf: NativeFn = Arc::new(move |ctx, args, loc| Box::pin(f(ctx, args, loc)));
+    pub fn register_sync(&mut self, name: &str, f: impl Fn(&Arc<Context>, &[Value]) -> Result<Value, JitError> + Send + Sync + 'static) {
+        let nf: NativeFn = Arc::new(f);
         self.callables_by_name.get_mut().insert(name.to_string(), Callable::Native(Arc::clone(&nf)));
     }
 
@@ -154,7 +143,7 @@ impl Context {
     ///
     /// Native functions should pass their `&ctx` (an `&Arc<Context>`) as the first argument.
     /// Returns the closure's return value.
-    pub async fn call_closure(
+    pub fn call_closure(
         ctx: &Arc<Self>,
         closure_val: Value,
         args: Vec<Value>,
@@ -209,8 +198,7 @@ impl Context {
         for (i, v) in args.iter().enumerate() {
             registers[cl.captures.len() + i] = *v;
         }
-        crate::vm::execute_bytecode(&func.instructions, Arc::clone(ctx), registers).await
-
+        crate::vm::execute_bytecode(&func.instructions, Arc::clone(ctx), registers)
 }
 
 }
