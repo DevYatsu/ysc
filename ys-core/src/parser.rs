@@ -720,12 +720,15 @@ impl<'source> Parser<'source> {
         let range_reg = self.parse_expression(instructions)?;
 
         // Optimisation: inline a literal Range to avoid heap round-trip.
-        let is_range =
-            matches!(instructions.last(), Some(Instruction::Range { dst, .. }) if *dst == range_reg);
-        let (start_reg, end_reg, step_reg) = if is_range {
+        // The range may have been followed by `.step()`, which pushes a
+        // LoadLiteral for the step argument, so search backwards.
+        let range_pos = instructions.iter().rposition(|i| {
+            matches!(i, Instruction::Range { dst, .. } if *dst == range_reg)
+        });
+        let (start_reg, end_reg, step_reg) = if let Some(pos) = range_pos {
             if let Some(Instruction::Range {
                 start, end, step, ..
-            }) = instructions.pop()
+            }) = Some(instructions.swap_remove(pos))
             {
                 let step_reg = match step {
                     Some(sr) => sr,
@@ -1172,20 +1175,19 @@ impl<'source> Parser<'source> {
                     // Check for `.step(N)` optimization on Range.
                     if field == "step" && matches!(self.stream.peek(), Some(Token::LParen)) {
                         self.stream.advance()?; // consume '('
+                        // Record the current end of instructions — the Range from
+                        // the preceding range expression is at `instructions.len()-1`.
+                        let range_pos = instructions.len().checked_sub(1);
                         let step_reg = self.parse_expression(instructions)?;
                         self.stream.expect(Token::RParen)?;
-                        // Find the preceding Range instruction and set its step.
-                        let range_idx = instructions.iter().rposition(|i| {
-                            matches!(i, Instruction::Range { dst, .. } if *dst == current)
-                        });
-                        if let Some(idx) = range_idx {
-                            let mut range = instructions.remove(idx);
-                            if let Instruction::Range { step, .. } = &mut range {
-                                *step = Some(step_reg);
-                            }
-                            instructions.push(range);
+                        // Patch the Range's step field in-place (O(1)).
+                        if let Some(pos) = range_pos
+                            && let Instruction::Range { dst, step, .. } = &mut instructions[pos]
+                            && *dst == current
+                        {
+                            *step = Some(step_reg);
                         } else {
-                            // No preceding Range — stand-alone call.
+                            // Fallback: No preceding Range — emit a new one.
                             let dst = self.alloc_reg();
                             instructions.push(Instruction::Range {
                                 dst,
