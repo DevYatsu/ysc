@@ -1,0 +1,13 @@
+// Async-style HTTP fetch
+// fetch() is blocking but async syntax demonstrates the pattern
+async fun fetch_url(url) {
+    print("Fetching: " + url)
+    let data = fetch(url)
+    print("Done fetching: " + url)
+    return data
+}
+
+print("Sequential fetches:")
+let a = await fetch_url("https://example.com")
+let b = await fetch_url("https://httpbin.org/get")
+print("All requests completed")

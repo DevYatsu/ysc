@@ -281,7 +281,8 @@ impl Heap {
     }
 
     fn trace_roots(&self, ctx: &Context, worklist: &mut Vec<u32>) {
-        worklist.extend(0..ctx.string_pool.len() as u32);
+        // Note: pool strings use their own Value tag (TAG_POOL), separate from
+        // heap objects (TAG_OBJ), so we don't need to add pool IDs as roots.
         for g in ctx.globals.get().iter() {
             if let Some(id) = g.as_obj_id() {
                 worklist.push(id);

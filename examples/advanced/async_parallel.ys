@@ -1,0 +1,20 @@
+// Demonstrates multiple async functions
+async fun process(n) {
+    let doubled = n * 2
+    return "Result: " + str(doubled)
+}
+
+// Sequential async calls
+let results = []
+results = results.concat(await process(1))
+results = results.concat(await process(2))
+results = results.concat(await process(3))
+print(results)
+
+// Async function composition
+async fun add(a, b) {
+    return a + b
+}
+
+let sum = await add(10, 20)
+print("Sum: " + str(sum))

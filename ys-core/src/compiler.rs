@@ -30,6 +30,7 @@ pub const QNAN:     u64 = 0x7ff0000000000000;
 pub const TAG_MASK: u64 = 0x000F000000000000;
 pub const TAG_BOOL: u64 = 0x0001000000000000;
 pub const TAG_OBJ:  u64 = 0x0002000000000000;
+pub const TAG_POOL: u64 = 0x000A000000000000;
 
 //  Value 
 
@@ -55,6 +56,10 @@ impl Value {
 
     #[inline(always)]
     pub fn object(id: u32) -> Self { Self(QNAN | TAG_OBJ | (id as u64)) }
+
+    /// Create a Value referencing a compile-time interned (pool) string by its ID.
+    #[inline(always)]
+    pub fn pool(id: u32) -> Self { Self(QNAN | TAG_POOL | (id as u64)) }
 
     /// Inline a string of up to 6 bytes into the NaN payload (SSO).
     /// Returns `None` if the string is too long.
@@ -85,6 +90,16 @@ impl Value {
     #[inline(always)]
     pub fn as_obj_id(self) -> Option<u32> {
         if (self.0 & (QNAN | TAG_MASK)) == (QNAN | TAG_OBJ) {
+            Some((self.0 & 0xFFFFFFFF) as u32)
+        } else {
+            None
+        }
+    }
+
+    /// Extract the pool-string ID if this value is a tagged pool string.
+    #[inline(always)]
+    pub fn as_pool_id(self) -> Option<u32> {
+        if (self.0 & (QNAN | TAG_MASK)) == (QNAN | TAG_POOL) {
             Some((self.0 & 0xFFFFFFFF) as u32)
         } else {
             None

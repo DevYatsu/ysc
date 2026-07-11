@@ -20,7 +20,7 @@ pub trait ValueExt {
 
 impl ValueExt for Value {
     fn with_str<R>(&self, ctx: &Context, f: impl FnOnce(&str) -> R) -> Option<R> {
-        use ys_core::compiler::TAG_MASK;
+        use ys_core::compiler::{TAG_MASK, TAG_POOL};
         let bits = self.to_bits();
         let tag  = (bits & TAG_MASK) >> 48;
 
@@ -34,6 +34,15 @@ impl ValueExt for Value {
             return std::str::from_utf8(&bytes[..len]).ok().map(f);
         }
 
+        // Pool strings (compile-time interned) — use a different tag from
+        // heap objects so their IDs never collide with runtime allocations.
+        if (bits & (TAG_MASK)) == TAG_POOL {
+            let id = (bits & 0xFFFFFFFF) as usize;
+            if id < ctx.string_pool.len() {
+                return Some(f(&ctx.string_pool[id]));
+            }
+        }
+
         if let Some(oid) = self.as_obj_id() {
             {
                 let heap = ctx.heap.objects.get();
@@ -42,9 +51,6 @@ impl ValueExt for Value {
                 {
                     return Some(f(s.as_ref()));
                 }
-            }
-            if (oid as usize) < ctx.string_pool.len() {
-                return Some(f(&ctx.string_pool[oid as usize]));
             }
         }
 

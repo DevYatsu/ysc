@@ -516,7 +516,15 @@ pub fn execute_bytecode(
 
                 Instruction::Await { dst, promise, loc: _loc } => {
                     let pv = frames[fi].registers[*promise];
-                    if let Some(oid) = pv.as_obj_id() {
+                    // Check if the value is a Promise object on the heap.
+                    let is_promise = pv.as_obj_id().is_some_and(|oid| {
+                        let objects = ctx.heap.objects.get();
+                        objects.get(oid as usize)
+                            .and_then(|o| o.as_ref())
+                            .is_some_and(|obj| matches!(obj.obj, ManagedObject::Promise(_)))
+                    });
+                    if is_promise {
+                        let oid = pv.as_obj_id().unwrap();
                         let mut resolved_val = None;
                         {
                             let objects = ctx.heap.objects.get();
@@ -543,6 +551,7 @@ pub fn execute_bytecode(
                             return Ok(ctx.alloc(ManagedObject::Promise(saved)));
                         }
                     } else {
+                        // Non-promise value — pass through directly
                         frames[fi].registers[*dst] = pv;
                         frames[fi].pc += 1;
                     }
@@ -567,23 +576,21 @@ pub fn execute_bytecode(
                     } else if let (Some(lv), Some(rv)) = (lv.as_number(), rv.as_number()) {
                         frames[fi].registers[*dst] = Value::number(lv + rv);
                     } else {
-                        // String concatenation
-                        let combined = lv.with_str(&ctx, |l| rv.with_str(&ctx, |r| {
-                            let mut s = String::with_capacity(l.len() + r.len());
-                            s.push_str(l); s.push_str(r); s
-                        })).flatten();
-                        match combined {
-                            Some(s) if Value::sso(&s).is_some() => {
-                                frames[fi].registers[*dst] = Value::sso(&s).unwrap();
+                        // String concatenation — using as_string directly for clarity
+                        if let (Some(ls), Some(rs)) = (lv.as_string(&ctx), rv.as_string(&ctx)) {
+                            let mut s = String::with_capacity(ls.len() + rs.len());
+                            s.push_str(&ls);
+                            s.push_str(&rs);
+                            if let Some(sso) = Value::sso(&s) {
+                                frames[fi].registers[*dst] = sso;
+                            } else {
+                                frames[fi].registers[*dst] = ctx.alloc(ManagedObject::String(Arc::from(s)));
                             }
-                            Some(s) => {
-                                frames[fi].registers[*dst] =
-                                    ctx.alloc(ManagedObject::String(Arc::from(s)));
-                            }
-                            None => return Err(JitError::runtime(
+                        } else {
+                            return Err(JitError::runtime(
                                 "Add error: expected numbers or strings",
                                 loc.line as usize, loc.col as usize,
-                            )),
+                            ));
                         }
                     }
                     frames[fi].pc += 1;

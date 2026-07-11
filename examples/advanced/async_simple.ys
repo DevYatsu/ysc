@@ -1,0 +1,13 @@
+// Basic async/await demonstration
+// async functions compile to regular functions for now
+async fun greet(name) {
+    return "Hello, " + name
+}
+
+// Calling an async function
+let msg = greet("Yatsu")
+print(msg)
+
+// Await on a value passes through directly
+let result = await greet("World")
+print("Greeting: " + result)

@@ -116,14 +116,17 @@ impl Context {
         if let Some(s) = v.as_sso_str() { 
             return std::str::from_utf8(&s).ok().map(|s| s.to_string());
         }
+        // Pool strings have their own tag to avoid ID collision with heap objects.
+        if let Some(id) = v.as_pool_id() {
+            if (id as usize) < self.string_pool.len() {
+                return Some(self.string_pool[id as usize].to_string());
+            }
+        }
         if let Some(oid) = v.as_obj_id() {
             let heap = self.heap.objects.get();
             if let Some(Some(obj)) = heap.get(oid as usize)
                 && let ManagedObject::String(s) = &obj.obj {
                     return Some(s.to_string());
-            }
-            if (oid as usize) < self.string_pool.len() {
-                return Some(self.string_pool[oid as usize].to_string());
             }
         }
         None
@@ -131,6 +134,7 @@ impl Context {
 
     /// Convert a value to its interned pool ID if possible.
     pub fn value_as_pool_id(&self, v: Value) -> Option<u32> {
+        if let Some(id) = v.as_pool_id() { return Some(id); }
         if let Some(oid) = v.as_obj_id() { return Some(oid); }
         if let Some(s) = v.as_sso_str() {
             let s_str = std::str::from_utf8(&s).ok()?;

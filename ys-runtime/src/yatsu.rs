@@ -25,7 +25,7 @@ use ys_core::error::JitError;
 pub fn value_type_name(val: &Value) -> &'static str {
     if val.as_number().is_some() { "number" }
     else if val.as_bool().is_some() { "boolean" }
-    else if val.as_sso_str().is_some() { "string" }
+    else if val.as_sso_str().is_some() || val.as_pool_id().is_some() { "string" }
     else if val.as_obj_id().is_some() { "object" }
     else { "nil" }
 }

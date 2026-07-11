@@ -176,7 +176,7 @@ impl Codegen {
             AstNode::Str(s, _) => {
                 let dst = self.alloc_reg();
                 let val = Value::sso(s)
-                    .unwrap_or_else(|| Value::object(self.intern(s)));
+                    .unwrap_or_else(|| Value::pool(self.intern(s)));
                 self.emit(Instruction::LoadLiteral { dst, val });
                 Ok(dst)
             }
@@ -192,7 +192,7 @@ impl Codegen {
                     // Unknown identifier → string literal
                     let dst = self.alloc_reg();
                     let val = Value::sso(name)
-                        .unwrap_or_else(|| Value::object(self.intern(name)));
+                        .unwrap_or_else(|| Value::pool(self.intern(name)));
                     self.emit(Instruction::LoadLiteral { dst, val });
                     Ok(dst)
                 }
@@ -209,7 +209,7 @@ impl Codegen {
                 let r = self.compile_node(rhs)?;
                 let dst = self.alloc_reg();
                 let instr = match op {
-                    BinOp::Add => Instruction::AddNum { dst, lhs: l, rhs: r },
+                    BinOp::Add => Instruction::Add   { dst, lhs: l, rhs: r, loc: *loc },
                     BinOp::Sub => Instruction::Sub  { dst, lhs: l, rhs: r, loc: *loc },
                     BinOp::Mul => Instruction::Mul  { dst, lhs: l, rhs: r, loc: *loc },
                     BinOp::Div => Instruction::Div  { dst, lhs: l, rhs: r, loc: *loc },
@@ -750,7 +750,7 @@ impl Codegen {
                 TemplatePart::Text(s) => {
                     let r = self.alloc_reg();
                     let val = Value::sso(s)
-                        .unwrap_or_else(|| Value::object(self.intern(s)));
+                        .unwrap_or_else(|| Value::pool(self.intern(s)));
                     self.emit(Instruction::LoadLiteral { dst: r, val });
                     result = Some(self.concat(result, r, loc)?);
                 }

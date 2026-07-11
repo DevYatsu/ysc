@@ -653,7 +653,7 @@ impl<'source> AstParser<'source> {
             Token::LBrace => self.parse_object_lit(loc),
             // Closure
             Token::Await => {
-                self.advance()?;
+                // Token already consumed by match self.advance()? above
                 let expr = self.parse_expression()?;
                 Ok(AstNode::Await(Box::new(expr), loc))
             }
