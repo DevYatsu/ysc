@@ -25,7 +25,10 @@ while p < MAX + 1 {
   }
   p = p + 1
 }
-print("Total " + str(total) + " primes <= " + str(MAX))
+print("Total primes found: ")
+print(total)
+print("Max checked: ")
+print(MAX)
 if total != ANSWER {
-  print("The answer is WRONG! Should be " + str(ANSWER) + "!")
+  print("WRONG!")
 }

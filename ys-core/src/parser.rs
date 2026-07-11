@@ -54,6 +54,19 @@ pub struct Parser<'source> {
     uses: Vec<Vec<String>>,
 }
 
+/// Adjust branch-target fields in an `Instruction` by adding `offset`.
+/// Used when instructions compiled into a temporary `Vec` are extended
+/// into the main instruction stream — jump targets that were computed
+/// relative to the temporary Vec need to be rebased.
+fn fix_branch_targets(instr: &mut Instruction, offset: usize) {
+    match instr {
+        Instruction::Jump(target) => *target += offset,
+        Instruction::JumpIfFalse { target, .. } => *target += offset,
+        Instruction::JumpIfNotLess { target, .. } => *target += offset,
+        _ => {}
+    }
+}
+
 impl<'source> Parser<'source> {
     // ═══════════════════════════════════════════════════════════════
     //  Construction & entry-point
@@ -605,7 +618,11 @@ impl<'source> Parser<'source> {
             }
         }
         self.stream.expect(Token::RBrace)?;
+        let body_off = instructions.len();
         instructions.extend(body);
+        for i in body_off..instructions.len() {
+            fix_branch_targets(&mut instructions[i], body_off);
+        }
 
         self.stream.skip_newlines();
         if matches!(self.stream.peek(), Some(Token::Else)) {
@@ -636,7 +653,11 @@ impl<'source> Parser<'source> {
                     }
                 }
                 self.stream.expect(Token::RBrace)?;
+                let else_off = instructions.len();
                 instructions.extend(else_body);
+                for i in else_off..instructions.len() {
+                    fix_branch_targets(&mut instructions[i], else_off);
+                }
             }
 
             instructions[else_jump] = Instruction::Jump(instructions.len());
@@ -673,7 +694,11 @@ impl<'source> Parser<'source> {
         }
         self.stream.skip_newlines();
         self.stream.expect(Token::RBrace)?;
+        let body_offset = instructions.len();
         instructions.extend(body);
+        for i in body_offset..instructions.len() {
+            fix_branch_targets(&mut instructions[i], body_offset);
+        }
 
         instructions.push(Instruction::Jump(loop_start));
         instructions[jump_idx] = Instruction::JumpIfFalse {
@@ -764,7 +789,13 @@ impl<'source> Parser<'source> {
         }
         self.stream.skip_newlines();
         self.stream.expect(Token::RBrace)?;
+        let body_offset = instructions.len();
         instructions.extend(body);
+        // Fix up all branch targets in the extended body — they were computed
+        // relative to `body` but need to be relative to `instructions`.
+        for i in body_offset..instructions.len() {
+            fix_branch_targets(&mut instructions[i], body_offset);
+        }
 
         // Increment: var = var + step
         instructions.push(Instruction::Add {
