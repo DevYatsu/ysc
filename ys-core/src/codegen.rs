@@ -271,6 +271,64 @@ impl Codegen {
                 Ok(0)
             }
 
+            // ── Switch ──────────────────────────────────────────────────────
+            AstNode::Switch { expr, arms, .. } => {
+                let val_reg = self.compile_node(expr)?;
+                let mut fail_jumps: Vec<(usize, usize)> = Vec::new();  // pattern mismatches
+                let mut end_jumps: Vec<usize> = Vec::new();   // arm bodies → exit
+                for arm in arms {
+                    // For each pattern: check if val matches, skip arm if not
+                    for pattern in &arm.patterns {
+                        let pat_reg = self.compile_node(pattern)?;
+                        let eq_reg = self.alloc_reg();
+                        self.emit(Instruction::Eq { dst: eq_reg, lhs: val_reg, rhs: pat_reg });
+                        let fail_idx = self.instructions.len();
+                        self.emit(Instruction::Jump(0)); // placeholder → JumpIfFalse
+                        fail_jumps.push((fail_idx, eq_reg));
+                    }
+                    // Default arm (empty patterns) — no check, always enter
+                    // Compile arm body
+                    for stmt in &arm.body {
+                        self.compile_node(stmt)?;
+                    }
+                    // Jump to end of switch (skip later arms)
+                    let end_jump = self.instructions.len();
+                    self.emit(Instruction::Jump(0));
+                    end_jumps.push(end_jump);
+                    // Patch fail jumps for this arm to skip to next arm
+                    for &(fail_idx, eq_reg) in &fail_jumps {
+                        let next_arm = self.instructions.len();
+                        if let Instruction::Jump(_) = &mut self.instructions[fail_idx] {
+                            self.instructions[fail_idx] = Instruction::JumpIfFalse { cond: eq_reg, target: next_arm };
+                        }
+                    }
+                    fail_jumps.clear();
+                }
+                // Patch all end jumps to jump to after the switch
+                let switch_end = self.instructions.len();
+                for &j in &end_jumps {
+                    if let Instruction::Jump(_) = &mut self.instructions[j] {
+                        self.instructions[j] = Instruction::Jump(switch_end);
+                    }
+                }
+                Ok(0)
+            }
+            AstNode::Break(_) => {
+                // Break → jump to end of switch. Gets patched by the outer switch handler.
+                self.emit(Instruction::Jump(0));
+                Ok(0)
+            }
+            // ── Async / Await (stub) ─────────────────────────────────────────
+            AstNode::AsyncFun { name, params, body, loc } => {
+                // For now, treat async fun as a regular fun (synchronous fallback)
+                self.compile_func(name, params, body, *loc);
+                Ok(0)
+            }
+            AstNode::Await(expr, _) => {
+                // For now, just compile the inner expression (synchronous fallback)
+                self.compile_node(expr)
+            }
+
             // ── Calls ────────────────────────────────────────────────────────
             AstNode::FunCall { name, args, loc } => {
                 self.compile_fun_call(name, args, *loc)

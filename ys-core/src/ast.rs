@@ -50,6 +50,17 @@ pub enum AstNode {
     For   { var: String, iter: Box<AstNode>, body: AstBlock, loc: Loc },
     Return { value: Option<Box<AstNode>>, loc: Loc },
 
+    // ── Switch ─
+    Switch {
+        expr: Box<AstNode>,
+        arms: Vec<SwitchArm>,
+        loc:  Loc,
+    },
+    Break(Loc),
+
+    // ── Async / Await ─
+    Await(Box<AstNode>, Loc),
+
     // ── Calls ─
     FunCall { name: String, args: Vec<AstNode>, loc: Loc },
     MethodCall { obj: Box<AstNode>, method: String, args: Vec<AstNode>, loc: Loc },
@@ -61,6 +72,13 @@ pub enum AstNode {
         params:   Vec<String>,
         body:     AstBlock,
         exported: bool,
+        loc:      Loc,
+    },
+    /// Async function — returns a Promise.
+    AsyncFun {
+        name:     String,
+        params:   Vec<String>,
+        body:     AstBlock,
         loc:      Loc,
     },
     Closure { params: Vec<String>, body: Box<AstNode>, is_move: bool, loc: Loc },
@@ -90,4 +108,11 @@ pub enum AstNode {
 pub enum TemplatePart {
     Text(String),
     Expr(Box<AstNode>),
+}
+
+/// A single arm of a switch statement.
+#[derive(Debug, Clone)]
+pub struct SwitchArm {
+    pub patterns: Vec<AstNode>,   // values to match (empty = default `_`)
+    pub body:     AstBlock,
 }

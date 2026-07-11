@@ -109,6 +109,18 @@ impl<'source> AstParser<'source> {
                             else { Some(Box::new(self.parse_expression()?)) };
                 Ok(Some(AstNode::Return { value, loc }))
             }
+            Token::Switch => { self.advance()?; self.parse_switch().map(Some) }
+            Token::Break  => { self.advance()?; Ok(Some(AstNode::Break(loc))) }
+            Token::Async  => {
+                self.advance()?;
+                self.stream.skip_newlines();
+                if self.peek() == Some(Token::Fun) {
+                    self.advance()?;
+                    self.parse_async_fun().map(Some)
+                } else {
+                    Err(JitError::parsing("expected 'fun' after 'async'", loc.line as usize, loc.col as usize))
+                }
+            }
             Token::If    => { self.advance()?; self.parse_if_stmt().map(Some) }
             Token::While => { self.advance()?; self.parse_while_loop().map(Some) }
             Token::For   => { self.advance()?; self.parse_for_loop().map(Some) }
@@ -328,6 +340,72 @@ impl<'source> AstParser<'source> {
             } else { break; }
         }
         Ok(AstNode::Use { path, loc })
+    }
+
+    // ── Switch statement ─────────────────────────────────────────────
+
+    fn parse_switch(&mut self) -> Result<AstNode, JitError> {
+        let loc = self.loc();
+        self.stream.skip_newlines();
+        let expr = self.parse_expression()?;
+        self.stream.skip_newlines();
+        self.expect(Token::LBrace)?;
+        let mut arms = Vec::new();
+        loop {
+            self.stream.skip_newlines();
+            if matches!(self.peek(), None | Some(Token::RBrace)) { break; }
+            let arm_loc = self.loc();
+            // Parse patterns (value | value | ...)
+            let mut patterns = Vec::new();
+            if self.peek() == Some(Token::Identifier("_")) {
+                self.advance()?; // wildcard — empty patterns = default
+            } else {
+                loop {
+                    patterns.push(self.parse_expression()?);
+                    self.stream.skip_newlines();
+                    if self.peek() == Some(Token::Pipe) {
+                        self.advance()?;
+                    } else { break; }
+                }
+            }
+            self.stream.skip_newlines();
+            self.expect(Token::Arrow)?;
+            // Body: either a block or an expression
+            self.stream.skip_newlines();
+            let body = if self.peek() == Some(Token::LBrace) {
+                let block = self.parse_block()?;
+                match block {
+                    AstNode::Block(s, _) => s,
+                    other => vec![other],
+                }
+            } else {
+                vec![self.parse_expression()?]
+            };
+            arms.push(SwitchArm { patterns, body });
+        }
+        self.expect(Token::RBrace)?;
+        Ok(AstNode::Switch { expr: Box::new(expr), arms, loc })
+    }
+
+    // ── Async function ─────────────────────────────────────────────
+
+    fn parse_async_fun(&mut self) -> Result<AstNode, JitError> {
+        let loc = self.loc();
+        let name = self.expect_ident()?.to_string();
+        self.expect(Token::LParen)?;
+        let params = self.parse_params_until(Token::RParen)?;
+        self.expect(Token::RParen)?;
+        self.stream.skip_newlines();
+        if self.peek() == Some(Token::Arrow) {
+            self.advance()?;
+            self.expect_ident()?;
+        }
+        self.expect(Token::LBrace)?;
+        let body = match self.parse_block()? {
+            AstNode::Block(s, _) => s,
+            other => vec![other],
+        };
+        Ok(AstNode::AsyncFun { name, params, body, loc })
     }
 
     // ══════════════════════════════════════════════════════════════════════
@@ -574,6 +652,11 @@ impl<'source> AstParser<'source> {
             // Object literal
             Token::LBrace => self.parse_object_lit(loc),
             // Closure
+            Token::Await => {
+                self.advance()?;
+                let expr = self.parse_expression()?;
+                Ok(AstNode::Await(Box::new(expr), loc))
+            }
             Token::Pipe => self.parse_closure(false, loc),
             Token::Move => {
                 self.expect(Token::Pipe)?;

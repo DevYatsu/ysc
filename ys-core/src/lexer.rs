@@ -92,6 +92,18 @@ pub enum Token<'source> {
     /// 'fun' function declaration keyword.
     #[token("fun")]
     Fun,
+    /// 'async' keyword for async functions.
+    #[token("async")]
+    Async,
+    /// 'await' keyword for awaiting promises.
+    #[token("await")]
+    Await,
+    /// 'switch' keyword.
+    #[token("switch")]
+    Switch,
+    /// 'break' keyword (inside switch/match).
+    #[token("break")]
+    Break,
     /// 'if' keyword.
     #[token("if")]
     If,
