@@ -246,7 +246,6 @@ pub struct UserFunction {
     /// Total registers required by this function's stack frame.
     pub locals_count: usize,
     /// Number of parameters the function accepts (used for arity checking).
-    #[allow(dead_code)]
     pub params_count: usize,
 }
 

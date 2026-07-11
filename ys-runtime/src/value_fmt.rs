@@ -88,7 +88,7 @@ fn stringify_nested(ctx: &Context, val: Value) -> String {
                 ManagedObject::Timestamp(_)   => "Timestamp(...)".into(),
                 ManagedObject::Range { .. }   => "Range(...)".into(),
                 ManagedObject::BoundMethod { .. } => "BoundMethod(...)".into(),
-                ManagedObject::Closure(_) => "Closure(...)".into(),
+                ManagedObject::Closure(_)       => "Closure(...)".into(),
             };
         }
         return "null".into();

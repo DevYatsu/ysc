@@ -73,6 +73,31 @@ fn build_call_registers(locals: usize, args_regs: &[usize], caller: &[Value]) ->
     regs
 }
 
+/// Build a register array pre-populated with captures followed by call arguments.
+/// Tries to reuse a pooled Vec before allocating a new one.
+fn build_closure_registers(locals: usize, captures: &[Value], args_regs: &[usize], caller: &[Value]) -> Vec<Value> {
+    if let Some(mut regs) = REG_POOL.with(|pool| pool.borrow_mut().pop())
+        && regs.len() == locals
+    {
+        for v in regs.iter_mut() { *v = Value::from_bits(0); }
+        for (i, v) in captures.iter().enumerate().take(locals) {
+            regs[i] = *v;
+        }
+        for (i, &r) in args_regs.iter().enumerate().take(locals.saturating_sub(captures.len())) {
+            regs[captures.len() + i] = unsafe { *caller.get_unchecked(r) };
+        }
+        return regs;
+    }
+    let mut regs: Vec<Value> = vec![Value::from_bits(0); locals];
+    for (i, v) in captures.iter().enumerate().take(locals) {
+        regs[i] = *v;
+    }
+    for (i, &r) in args_regs.iter().enumerate().take(locals.saturating_sub(captures.len())) {
+        regs[captures.len() + i] = unsafe { *caller.get_unchecked(r) };
+    }
+    regs
+}
+
 fn pool_regs(regs: Vec<Value>) {
     REG_POOL.with(|pool| {
         let mut pool = pool.borrow_mut();
@@ -763,9 +788,8 @@ pub fn execute_bytecode<'a>(
                             && let ManagedObject::Closure(cl) = &o.obj
                         {
                             let func_idx = cl.func_index as usize;
-                            let captures = cl.captures.clone();
                             let args_regs = &*box_data.args_regs;
-                            let total_args = captures.len() + args_regs.len();
+                            let total_args = cl.captures.len() + args_regs.len();
                             let func = &ctx.functions[func_idx];
                             if total_args != func.params_count {
                                 return Err(JitError::runtime(
@@ -775,13 +799,12 @@ pub fn execute_bytecode<'a>(
                             }
                             let ret = dst.map(|d| ReturnTarget { dst: d });
                             frames.last_mut().unwrap().pc += 1;
-                            let mut callee_regs = make_registers(func.locals_count);
-                            for (i, v) in captures.iter().enumerate() {
-                                callee_regs[i] = *v;
-                            }
-                            for (i, &r) in args_regs.iter().enumerate() {
-                                callee_regs[captures.len() + i] = frames.last_mut().unwrap().registers[r];
-                            }
+                            let callee_regs = build_closure_registers(
+                                func.locals_count,
+                                &cl.captures,
+                                args_regs,
+                                &frames.last_mut().unwrap().registers,
+                            );
                             frames.push(CallFrame {
                                 instructions: InstrPtr::from_arc(&func.instructions),
                                 registers: callee_regs,
