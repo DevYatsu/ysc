@@ -43,12 +43,18 @@ pub async fn run_interpreter(program: Program) -> Result<(), JitError> {
     }
 
     // 3. Initialize the shared context.
-    // Build string-keyed callables from the name_id-keyed map.
+    // Build string-keyed callables from both the name_id map and remaining
+    // native functions that weren't referenced in any source file.
     let mut callables_by_name: FxHashMap<String, Callable> = FxHashMap::default();
     for (&name_id, callable) in &callable_map {
         if let Some(name) = program.string_pool.get(name_id as usize) {
             callables_by_name.insert(name.to_string(), callable.clone());
         }
+    }
+    // Native functions whose names weren't in any source file's string pool
+    // still need to be accessible via string lookup.
+    for (name, nf) in native_fns {
+        callables_by_name.entry(name).or_insert_with(|| Callable::Native(nf));
     }
     let ctx = Arc::new(Context {
         globals: SyncCell::new(vec![Value::from_bits(0); program.globals_count]),
