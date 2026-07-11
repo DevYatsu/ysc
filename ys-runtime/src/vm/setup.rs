@@ -8,7 +8,6 @@ use crate::heap::{Heap, HeapMetadata, SyncCell};
 use crate::natives;
 use crate::vm::{execute_bytecode, make_registers};
 use rustc_hash::{FxHashMap, FxHashSet};
-use std::sync::atomic::{AtomicU32, AtomicUsize};
 use std::sync::Arc;
 use ys_core::compiler::{Program, Value};
 use ys_core::error::JitError;
@@ -56,8 +55,8 @@ pub async fn run_interpreter(program: Program) -> Result<(), JitError> {
                 nursery_ids:    Vec::with_capacity(1024),
                 remembered_set: FxHashSet::default(),
             }),
-            gc_count:       AtomicU32::new(0),
-            alloc_since_gc: AtomicUsize::new(0),
+            gc_count:       SyncCell::new(0),
+            alloc_since_gc: SyncCell::new(0),
         },
     });
 

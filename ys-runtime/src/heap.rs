@@ -19,7 +19,6 @@
 
 use std::cell::UnsafeCell;
 use rustc_hash::FxHashSet;
-use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::sync::Arc;
 use ys_core::compiler::Value;
 
@@ -139,15 +138,19 @@ pub struct Heap {
     /// GC bookkeeping (free list, nursery set, remembered set).
     pub metadata:      SyncCell<HeapMetadata>,
     /// Running count of GC cycles — every 5th triggers a major collection.
-    pub gc_count:      AtomicU32,
+    pub gc_count:      SyncCell<u32>,
     /// Allocations since the last GC (triggers GC at 100 000).
-    pub alloc_since_gc: AtomicUsize,
+    pub alloc_since_gc: SyncCell<usize>,
 }
 
 impl Heap {
     /// Trigger either a minor or major collection.
     pub fn collect_garbage(&self, ctx: &Context) {
-        let gc_id = self.gc_count.fetch_add(1, Ordering::Relaxed) + 1;
+        let gc_id = {
+            let count = self.gc_count.get_mut();
+            *count += 1;
+            *count
+        };
         if gc_id.is_multiple_of(5) {
             self.major_gc(gc_id, ctx);
         } else {
@@ -268,8 +271,14 @@ impl Heap {
     }
 
     pub fn alloc(&self, obj: ManagedObject, ctx: &Context) -> Value {
-        if self.alloc_since_gc.fetch_add(1, Ordering::Relaxed) > 100_000 {
-            self.collect_garbage(ctx);
+        {
+            let count = self.alloc_since_gc.get_mut();
+            let old = *count;
+            *count += 1;
+            if old > 100_000 {
+                *count = 0;
+                self.collect_garbage(ctx);
+            }
         }
 
         let meta = self.metadata.get_mut();
