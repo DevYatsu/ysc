@@ -378,7 +378,6 @@ struct CallFrame {
     registers:    Vec<Value>,
     pc:           usize,
     return_to:    Option<ReturnTarget>,
-    string_pool:  Arc<[Arc<str>]>,
 }
 
 impl CallFrame {
@@ -421,7 +420,7 @@ pub fn execute_bytecode<'a>(
             registers,
             pc: 0,
             return_to: None,
-            string_pool: ctx.string_pool.clone(),
+            
         }];
         set_current_frames(&frames);
 
@@ -723,15 +722,15 @@ pub fn execute_bytecode<'a>(
                     let name_id = box_data.name_id;
                         let dst = box_data.dst;
                         let loc = box_data.loc;
-                    let callable = ctx.get_callable(name_id).or_else(|| {
-                        let name = ctx.string_pool.get(name_id as usize)?;
-                        ctx.get_callable_by_name(name)
-                    }).ok_or_else(|| {
-                        JitError::runtime(
-                            format!("Unknown function: {}", ctx.string_pool.get(name_id as usize).map_or("?", |s| s)),
-                            loc.line as usize, loc.col as usize,
-                        )
-                    })?;
+                    let callable = match ctx.get_callable(name_id) {
+                        Some(c) => c,
+                        None => {
+                            let name = ctx.string_pool.get(name_id as usize).map(|s| s.as_ref()).unwrap_or("?");
+                            ctx.get_callable_by_name(name).ok_or_else(|| {
+                                JitError::runtime(format!("Unknown function: {}", name), loc.line as usize, loc.col as usize)
+                            })?
+                        }
+                    };
 
                     match callable {
                         Callable::Native(nf) => {
@@ -752,7 +751,7 @@ pub fn execute_bytecode<'a>(
                             let ret = dst.map(|d| ReturnTarget { dst: d });
                             frames[fi].pc += 1;
                             let callee_regs = build_call_registers(f.locals_count, args_regs, &frames[fi].registers);
-                            frames.push(CallFrame { instructions: InstrPtr::from_arc(&f.instructions), registers: callee_regs, pc: 0, return_to: ret, string_pool: frames[fi].string_pool.clone() });
+                            frames.push(CallFrame { instructions: InstrPtr::from_arc(&f.instructions), registers: callee_regs, pc: 0, return_to: ret });
                         }
                     }
                 }
@@ -770,7 +769,7 @@ pub fn execute_bytecode<'a>(
                         if let Some(o) = o
                             && let ManagedObject::BoundMethod { receiver, name_id } = &o.obj
                         {
-                            let method = frames[fi].string_pool.get(*name_id as usize).map(|s| s.as_ref()).unwrap_or("");
+                            let method = ctx.string_pool.get(*name_id as usize).map(|s| s.as_ref()).unwrap_or("");
                             let receiver = *receiver;
 
                             if method == "step"
@@ -966,7 +965,6 @@ pub fn execute_bytecode<'a>(
                                 registers: callee_regs,
                                 pc: 0,
                                 return_to: ret,
-                                string_pool: frames[fi].string_pool.clone(),
                             });
                             continue;
                         }
@@ -976,10 +974,10 @@ pub fn execute_bytecode<'a>(
                         "Callee is not a known function name", loc.line as usize, loc.col as usize,
                     ))?;
                     let callable = ctx.get_callable(name_id).or_else(|| {
-                        let name = frames[fi].string_pool.get(name_id as usize)?;
+                        let name = ctx.string_pool.get(name_id as usize)?;
                         ctx.get_callable_by_name(name)
                     }).ok_or_else(|| JitError::runtime(
-                        format!("Dynamic call: unknown function '{}'", frames[fi].string_pool.get(name_id as usize).map_or("?", |s| s)),
+                        format!("Dynamic call: unknown function '{}'", ctx.string_pool.get(name_id as usize).map_or("?", |s| s)),
                         loc.line as usize, loc.col as usize,
                     ))?;
 
@@ -1002,7 +1000,7 @@ pub fn execute_bytecode<'a>(
                             let ret = dst.map(|d| ReturnTarget { dst: d });
                             frames[fi].pc += 1;
                             let callee_regs = build_call_registers(f.locals_count, args_regs, &frames[fi].registers);
-                            frames.push(CallFrame { instructions: InstrPtr::from_arc(&f.instructions), registers: callee_regs, pc: 0, return_to: ret, string_pool: frames[fi].string_pool.clone() });
+                            frames.push(CallFrame { instructions: InstrPtr::from_arc(&f.instructions), registers: callee_regs, pc: 0, return_to: ret });
                         }
                     }
                 }
