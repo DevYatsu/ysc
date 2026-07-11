@@ -72,48 +72,64 @@ impl LexingError {
 #[logos(skip r"[ \t\f]+")]
 #[logos(skip r"/\*(?:[^*]|\*[^/])*\*/")]
 pub enum Token<'source> {
-    /// 'mut' keyword for declaring a mutablet variable.
-    #[token("mut")]
-    MutableVar,
-    /// 'let' keyword for declaring an immutablet variable.
-    #[token("let")]
-    ImmutableVar,
-    /// 'fn' keyword for declaring a function.
-    #[token("fn")]
-    Fn,
-    /// 'return' keyword.
-    #[token("return")]
-    Return,
-    /// 'continue' keyword.
+    // -- Keywords -----------------------------------------------------------
+
+    /// 'and' boolean AND operator.
+    #[token("and")]
+    And,
+    /// 'continue' keyword (reserved for future use).
     #[token("continue")]
     Continue,
-    /// 'if' keyword.
-    #[token("if")]
-    If,
     /// 'else' keyword.
     #[token("else")]
     Else,
+    /// 'exp' export visibility modifier.
+    #[token("exp")]
+    Exp,
+    /// 'for' loop keyword.
+    #[token("for")]
+    For,
+    /// 'fun' function declaration keyword.
+    #[token("fun")]
+    Fun,
+    /// 'if' keyword.
+    #[token("if")]
+    If,
+    /// 'in' keyword for iterators.
+    #[token("in")]
+    In,
+    /// 'move' closure capture-by-value keyword.
+    #[token("move")]
+    Move,
+    /// 'or' boolean OR operator.
+    #[token("or")]
+    Or,
+    /// 'return' keyword.
+    #[token("return")]
+    Return,
+    /// 'super' parent module path.
+    #[token("super")]
+    Super,
+    /// 'use' module import keyword.
+    #[token("use")]
+    Use,
+    /// 'while' loop keyword.
+    #[token("while")]
+    While,
+
+    // -- Punctuation / operators --------------------------------------------
+    // Multi-character tokens must precede single-character tokens that share
+    // a prefix so that logos matches the longer variant first.
+
+    /// '..' range operator (before '.').
+    #[token("..")]
+    Range,
     /// ':' separator.
     #[token(":")]
     Colon,
     /// '\n' line separator.
     #[token("\n")]
     Newline,
-    /// 'spawn' keyword for concurrency.
-    #[token("spawn")]
-    Spawn,
-    /// 'for' loop keyword.
-    #[token("for")]
-    For,
-    /// 'while' loop keyword.
-    #[token("while")]
-    While,
-    /// 'in' keyword for iterators.
-    #[token("in")]
-    In,
-    /// '..' range operator.
-    #[token("..")]
-    Range,
     /// '{' opening brace.
     #[token("{")]
     LBrace,
@@ -141,6 +157,9 @@ pub enum Token<'source> {
     /// '+' operator.
     #[token("+")]
     Plus,
+    /// '->' arrow for return type annotations (before '-').
+    #[token("->")]
+    Arrow,
     /// '-' operator.
     #[token("-")]
     Minus,
@@ -150,27 +169,36 @@ pub enum Token<'source> {
     /// '/' operator.
     #[token("/")]
     Div,
-    /// '==' operator.
+    /// '==' equality operator (before '=').
     #[token("==")]
     Eq,
-    /// '!=' operator.
+    /// '=' assignment operator.
+    #[token("=")]
+    Equals,
+    /// '!=' not-equal operator (before '!').
     #[token("!=")]
     Ne,
+    /// '<=' less-or-equal operator (before '<').
+    #[token("<=")]
+    Le,
     /// '<' operator.
     #[token("<")]
     Lt,
-    /// '<=' operator.
-    #[token("<=")]
-    Le,
+    /// '>=' greater-or-equal operator (before '>').
+    #[token(">=")]
+    Ge,
     /// '>' operator.
     #[token(">")]
     Gt,
-    /// '>=' operator.
-    #[token(">=")]
-    Ge,
-    /// '!' operator.
+    /// '!' logical NOT operator.
     #[token("!")]
     Not,
+    /// '|' pipe delimiter for closure parameter lists.
+    #[token("|")]
+    Pipe,
+
+    // -- Literals -----------------------------------------------------------
+
     /// Boolean literals.
     #[token("false", |_| false)]
     #[token("true", |_| true)]
@@ -183,14 +211,15 @@ pub enum Token<'source> {
     )]
     Number(f64),
 
-    /// String literals enclosed in doublet quotes.
+    /// String literals enclosed in double quotes.
     #[regex(r#""([^"\\\x00-\x1F]|\\(["\\bnfrt/]|u[a-fA-F0-9]{4}))*""#, |lex| {
         let  s = lex.slice();
         &s[1..s.len()-1]
     })]
     String(&'source str),
 
-    /// Identifier names.
+    /// Identifier names.  Note: keywords like `and` and `or` are matched
+    /// before this regex by virtue of their `#[token(…)]` definitions above.
     #[regex(r"[[:alpha:]_][[:alpha:]0-9_]*", |lex| lex.slice())]
     Identifier(&'source str),
 
@@ -237,21 +266,23 @@ mod tests {
 
     #[test]
     fn test_lexer_keywords() {
-        let input = "mut let fn return continue if else spawn for while in ..";
+        let input = "fun return continue if else for while in use super exp move and or";
         let mut lexer = Token::lexer(input);
 
-        assert_eq!(lexer.next(), Some(Ok(Token::MutableVar)));
-        assert_eq!(lexer.next(), Some(Ok(Token::ImmutableVar)));
-        assert_eq!(lexer.next(), Some(Ok(Token::Fn)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Fun)));
         assert_eq!(lexer.next(), Some(Ok(Token::Return)));
         assert_eq!(lexer.next(), Some(Ok(Token::Continue)));
         assert_eq!(lexer.next(), Some(Ok(Token::If)));
         assert_eq!(lexer.next(), Some(Ok(Token::Else)));
-        assert_eq!(lexer.next(), Some(Ok(Token::Spawn)));
         assert_eq!(lexer.next(), Some(Ok(Token::For)));
         assert_eq!(lexer.next(), Some(Ok(Token::While)));
         assert_eq!(lexer.next(), Some(Ok(Token::In)));
-        assert_eq!(lexer.next(), Some(Ok(Token::Range)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Use)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Super)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Exp)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Move)));
+        assert_eq!(lexer.next(), Some(Ok(Token::And)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Or)));
         assert_eq!(lexer.next(), None);
     }
 
@@ -272,10 +303,11 @@ mod tests {
 
     #[test]
     fn test_lexer_symbols() {
-        let input = ": { } ( ) [ ] , . + - * / == != < <= > >= !";
+        let input = ": = { } ( ) [ ] , . + - * / == != < <= > >= ! | ->";
         let mut lexer = Token::lexer(input);
 
         assert_eq!(lexer.next(), Some(Ok(Token::Colon)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Equals)));
         assert_eq!(lexer.next(), Some(Ok(Token::LBrace)));
         assert_eq!(lexer.next(), Some(Ok(Token::RBrace)));
         assert_eq!(lexer.next(), Some(Ok(Token::LParen)));
@@ -295,18 +327,26 @@ mod tests {
         assert_eq!(lexer.next(), Some(Ok(Token::Gt)));
         assert_eq!(lexer.next(), Some(Ok(Token::Ge)));
         assert_eq!(lexer.next(), Some(Ok(Token::Not)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Pipe)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Arrow)));
         assert_eq!(lexer.next(), None);
     }
 
     #[test]
     fn test_lexer_comments() {
-        let input = "mut x = 10 // this is a comment\nlet y = 20";
+        let input = "fun x = 10 // this is a comment\nlet y = 20";
         let mut lexer = Token::lexer(input);
 
-        assert_eq!(lexer.next(), Some(Ok(Token::MutableVar)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Fun)));
         assert_eq!(lexer.next(), Some(Ok(Token::Identifier("x"))));
-        // Note: = is not a singlet token, it is usually handled in assignment or Eq?
-        // Wait, looking at lexer.rs I don't see '='.
-        // let  me re-check lexer.rs.
+        assert_eq!(lexer.next(), Some(Ok(Token::Equals)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Number(10.0))));
+        assert_eq!(lexer.next(), Some(Ok(Token::LineComment)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Newline)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Identifier("let"))));
+        assert_eq!(lexer.next(), Some(Ok(Token::Identifier("y"))));
+        assert_eq!(lexer.next(), Some(Ok(Token::Equals)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Number(20.0))));
+        assert_eq!(lexer.next(), None);
     }
 }

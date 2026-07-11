@@ -448,14 +448,12 @@ impl<'source> Parser<'source> {
                 Token::Newline => {
                     self.stream.advance().ok();
                 }
-                Token::MutableVar => return Some(self.parse_var_decl(true, instructions)),
-                Token::ImmutableVar => return Some(self.parse_var_decl(false, instructions)),
                 Token::For => return Some(self.parse_for_loop(instructions)),
                 Token::While => {
                     self.stream.advance().ok();
                     return Some(self.parse_while_loop(instructions));
                 }
-                Token::Fn => {
+                Token::Fun => {
                     self.stream.advance().ok();
                     return Some(self.parse_fn_decl());
                 }
@@ -480,13 +478,6 @@ impl<'source> Parser<'source> {
                         )));
                     }
                     return Some(Ok(()));
-                }
-                Token::Spawn => {
-                    return Some(Err(JitError::parsing(
-                        "spawn is no longer supported".to_string(),
-                        self.stream.loc().line as usize,
-                        self.stream.loc().col as usize,
-                    )));
                 }
                 Token::Identifier(id) => {
                     if self.is_assignment() {
@@ -542,7 +533,7 @@ impl<'source> Parser<'source> {
                         _ => return false,
                     }
                 }
-                Token::Colon => return true,
+                Token::Equals => return true,
                 _ => return false,
             }
         }
@@ -592,9 +583,32 @@ impl<'source> Parser<'source> {
         instructions: &mut Vec<Instruction>,
     ) -> Result<(), JitError> {
         let loc = self.stream.loc();
-        let info = self.get_var(id).ok_or_else(|| {
-            JitError::unknown_variable(id.to_string(), loc.line as usize, loc.col as usize)
-        })?;
+        // In v2, all variables are mutable and auto-declared on first assignment.
+        let info = match self.get_var(id) {
+            Some(info) => info,
+            None => {
+                let is_global = !self.is_in_function;
+                let idx = if is_global {
+                    let i = self.next_global;
+                    self.next_global += 1;
+                    i
+                } else {
+                    self.alloc_reg()
+                };
+                let info = VarInfo {
+                    idx,
+                    is_mut: true,
+                    is_global,
+                    first_line: loc.line as usize,
+                };
+                if is_global {
+                    self.globals.insert(id, info);
+                } else {
+                    self.locals.insert(id, info);
+                }
+                info
+            }
+        };
 
         let mut accessors = Vec::new();
         loop {
@@ -623,9 +637,9 @@ impl<'source> Parser<'source> {
             }
         }
 
-        self.stream.expect(Token::Colon)?;
+        self.stream.expect(Token::Equals)?;
 
-        // Optimization: x: x + 1  or  x: 1 + x
+        // Optimization: x = x + 1  or  x = 1 + x
         if accessors.is_empty()
             && self.try_parse_increment(id, &info, instructions)? {
                 return Ok(());
@@ -633,16 +647,6 @@ impl<'source> Parser<'source> {
 
         let src = self.parse_expr(instructions)?;
         if accessors.is_empty() {
-            if !info.is_mut {
-                return Err(JitError::RedefinitionOfImmutableVariable {
-                    msg: id.to_string(),
-                    loc: crate::error::ErrorLoc::new(
-                        self.stream.loc().line as usize,
-                        self.stream.loc().col as usize,
-                    ),
-                    orig_line: info.first_line,
-                });
-            }
             if info.is_global {
                 instructions.push(Instruction::StoreGlobal {
                     global: info.idx,
@@ -1137,7 +1141,7 @@ mod tests {
 
     #[test]
     fn test_parse_simple_assignment() {
-        let input = "let x: 10";
+        let input = "x = 10";
         let parser = Parser::new(input).unwrap();
         let program = parser.compile().unwrap();
 
@@ -1158,7 +1162,7 @@ mod tests {
 
     #[test]
     fn test_parse_arithmetic() {
-        let input = "let x: 1 + 2 * 3";
+        let input = "x = 1 + 2 * 3";
         let parser = Parser::new(input).unwrap();
         let program = parser.compile().unwrap();
 
@@ -1168,18 +1172,6 @@ mod tests {
         // 4. r1 * r2 -> r3
         // 5. r0 + r3 -> r4
         // 6. StoreGlobal(0, r4)
-        assert_ne!(program.instructions.len(), 4); // Wait, how many?
-        // Let's count properly:
-        // parse_expr for 1 + 2 * 3:
-        //   parse_primary(1) -> LoadLiteral(r0, 1), returns r0
-        //   parse_binary(+, min_prec=1):
-        //     rhs = parse_binary(*, min_prec=4):
-        //       parse_primary(2) -> LoadLiteral(r1, 2), returns r1
-        //       parse_primary(3) -> LoadLiteral(r2, 3), returns r2
-        //       instructions.push(Mul { dst: r3, lhs: r1, rhs: r2 }), returns r3
-        //     instructions.push(Add { dst: r4, lhs: r0, rhs: r3 }), returns r4
-        // parse_var_decl:
-        //   instructions.push(StoreGlobal { global: 0, src: r4 })
 
         assert_eq!(program.instructions.len(), 6);
         assert_eq!(program.globals_count, 1);
@@ -1187,7 +1179,7 @@ mod tests {
 
     #[test]
     fn test_parse_if_statement() {
-        let input = "mut x: 10\nif x > 0 {\n  x: 20\n}";
+        let input = "x = 10\nif x > 0 {\n  x = 20\n}";
         let parser = Parser::new(input).unwrap();
         let program = parser.compile().unwrap();
 
@@ -1212,7 +1204,7 @@ mod tests {
 
     #[test]
     fn test_parse_function_declaration() {
-        let input = "fn add(a, b) {\n  return a + b\n}";
+        let input = "fun add(a, b) {\n  return a + b\n}";
         let parser = Parser::new(input).unwrap();
         let program = parser.compile().unwrap();
 
@@ -1231,7 +1223,7 @@ mod tests {
 
     #[test]
     fn test_parse_list_and_object() {
-        let input = "let l: [1, 2, 3]\nlet o: {a: 1, b: 2}";
+        let input = "l = [1, 2, 3]\no = {a: 1, b: 2}";
         let parser = Parser::new(input).unwrap();
         let program = parser.compile().unwrap();
 
@@ -1239,11 +1231,11 @@ mod tests {
         let has_new_list = program
             .instructions
             .iter()
-            .any(|i| matches!(i, Instruction::NewList { .. }));
+            .any(|i| matches!(i, Instruction::NewList { .. } | Instruction::NewListFrom { .. }));
         let has_new_obj = program
             .instructions
             .iter()
-            .any(|i| matches!(i, Instruction::NewObject { .. }));
+            .any(|i| matches!(i, Instruction::NewObject { .. } | Instruction::NewObjectFrom { .. }));
 
         assert!(has_new_list);
         assert!(has_new_obj);
@@ -1251,10 +1243,12 @@ mod tests {
 
     #[test]
     fn test_parse_error_unknown_variable() {
-        let input = "x: 10";
+        // In v2, identifiers in expressions are treated as potential function
+        // references (loaded as string literals), so `x = y` succeeds.
+        // Test a real syntax error instead: missing expression after `=`.
+        let input = "x = ";
         let parser = Parser::new(input).unwrap();
         let result = parser.compile();
         assert!(result.is_err());
-        // Should be JitError::unknown_variable
     }
 }
