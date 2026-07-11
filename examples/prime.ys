@@ -1,34 +1,28 @@
-ANSWER = 78498
-MAX = 1000000
-is_prime = [true; MAX + 1]
-is_prime[0] = false
-is_prime[1] = false
-
-p = 2
-while p < MAX + 1 {
-  if is_prime[p] {
-    step = p
-    i = p + p
-    while i < MAX + 1 {
-      is_prime[i] = false
-      i = i + step
+fun sieve(limit) {
+  is_prime = [true; limit]
+  is_prime[0] = false
+  is_prime[1] = false
+  for p in 2 .. limit {
+    if is_prime[p] {
+      step = p
+      for i in (p + p .. limit).step(p) {
+        is_prime[i] = false
+      }
     }
   }
-  p = p + 1
+  total = 0
+  for p in 2 .. limit {
+    if is_prime[p] {
+      total = total + 1
+    }
+  }
+  return total
 }
 
-total = 0
-p = 2
-while p < MAX + 1 {
-  if is_prime[p] {
-    total = total + 1
-  }
-  p = p + 1
-}
-print("Total primes found: ")
+ANSWER = 78498
+total = sieve(1000001)
 print(total)
-print("Max checked: ")
-print(MAX)
+print(ANSWER)
 if total != ANSWER {
   print("WRONG!")
 }
