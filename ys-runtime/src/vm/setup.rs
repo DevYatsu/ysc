@@ -43,10 +43,18 @@ pub async fn run_interpreter(program: Program) -> Result<(), JitError> {
     }
 
     // 3. Initialize the shared context.
+    // Build string-keyed callables from the name_id-keyed map.
+    let mut callables_by_name: FxHashMap<String, Callable> = FxHashMap::default();
+    for (&name_id, callable) in &callable_map {
+        if let Some(name) = program.string_pool.get(name_id as usize) {
+            callables_by_name.insert(name.to_string(), callable.clone());
+        }
+    }
     let ctx = Arc::new(Context {
         globals: SyncCell::new(vec![Value::from_bits(0); program.globals_count]),
         string_pool: Arc::clone(&program.string_pool),
         callables: callable_map,
+        callables_by_name,
         heap: Heap {
             objects:        SyncCell::new(Vec::with_capacity(1024)),
             metadata:       SyncCell::new(HeapMetadata {

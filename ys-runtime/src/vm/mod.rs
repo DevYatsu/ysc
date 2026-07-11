@@ -721,9 +721,10 @@ pub fn execute_bytecode<'a>(
                     let name_id = box_data.name_id;
                         let dst = box_data.dst;
                         let loc = box_data.loc;
-                    let callable = ctx.get_callable(name_id).ok_or_else(|| {
+                    let name_str = ctx.string_pool.get(name_id as usize).map(|s| s.as_ref()).unwrap_or("?");
+                    let callable = ctx.get_callable_by_name(name_str).ok_or_else(|| {
                         JitError::runtime(
-                            format!("Unknown function: {}", ctx.string_pool.get(name_id as usize).map_or("?", |s| s)),
+                            format!("Unknown function: {}", name_str),
                             loc.line as usize, loc.col as usize,
                         )
                     })?;
@@ -866,11 +867,9 @@ pub fn execute_bytecode<'a>(
                         }
                     }
 
-                    let name_id = ctx.value_as_pool_id(callee_val).ok_or_else(|| JitError::runtime(
-                        "Callee is not a known function name", loc.line as usize, loc.col as usize,
-                    ))?;
-                    let callable = ctx.get_callable(name_id).ok_or_else(|| JitError::runtime(
-                        format!("Dynamic call: unknown function '{}'", ctx.string_pool.get(name_id as usize).map_or("?", |s| s)),
+                    let name_str = ctx.value_as_string(callee_val).unwrap_or_default();
+                    let callable = ctx.get_callable_by_name(&name_str).ok_or_else(|| JitError::runtime(
+                        format!("Dynamic call: unknown function '{}'", name_str),
                         loc.line as usize, loc.col as usize,
                     ))?;
 

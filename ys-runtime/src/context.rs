@@ -1,6 +1,10 @@
 use crate::heap::{Closure, Heap, ManagedObject, SyncCell};
 use std::sync::Arc;
 use ys_core::compiler::{Loc, Value};
+use rustc_hash::FxHashMap;
+use std::future::Future;
+use std::pin::Pin;
+
 use ys_core::error::JitError;
 
 //  Backend trait 
@@ -47,6 +51,7 @@ pub struct Context {
     pub string_pool: Arc<[Arc<str>]>,
     pub globals:    SyncCell<Vec<Value>>,
     pub callables:  rustc_hash::FxHashMap<u32, Callable>,
+    pub callables_by_name: FxHashMap<String, Callable>,
 }
 
 impl Context {
@@ -75,9 +80,26 @@ impl Context {
         }
     }
 
-    /// Retrieve a callable by its interned string ID.
+    /// Retrieve a callable — first by name_id (fast path), then by string name.
     pub fn get_callable(&self, id: u32) -> Option<&Callable> {
         self.callables.get(&id)
+    }
+
+    /// Retrieve a callable by its string name (primary API for embedding).
+    pub fn get_callable_by_name(&self, name: &str) -> Option<&Callable> {
+        self.callables_by_name.get(name)
+    }
+
+    /// Register a native function so scripts can call it by name.
+    ///
+    /// This is the primary API for embedding YatsuScript in games and apps.
+    pub fn register<F, Fut>(&mut self, name: &str, f: F)
+    where
+        F: Fn(Arc<Context>, Vec<Value>, Loc) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<Value, JitError>> + Send + 'static,
+    {
+        let nf: NativeFn = Arc::new(move |ctx, args, loc| Box::pin(f(ctx, args, loc)));
+        self.callables_by_name.insert(name.to_string(), Callable::Native(Arc::clone(&nf)));
     }
 
     /// Try to read a value as a string (SSO, heap, or string pool).
