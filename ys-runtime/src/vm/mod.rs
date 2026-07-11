@@ -185,7 +185,11 @@ fn handle_list_get(
                 ManagedObject::String(s) => {
                     if idx < s.len() {
                         let byte = unsafe { *s.as_bytes().get_unchecked(idx) };
-                        GetResult::Value(Value::sso(&(byte as char).to_string()).unwrap_or(Value::from_bits(0)))
+                        {
+    let mut buf = [0u8; 4];
+    let s = (byte as char).encode_utf8(&mut buf);
+    GetResult::Value(Value::sso(s).unwrap_or(Value::from_bits(0)))
+}
                     } else {
                         GetResult::Error(format!("String index {} out of bounds", idx))
                     }
@@ -198,7 +202,11 @@ fn handle_list_get(
         && idx < s.len()
     {
         let byte = s.as_bytes()[idx];
-        GetResult::Value(Value::sso(&(byte as char).to_string()).unwrap_or(Value::from_bits(0)))
+        {
+    let mut buf = [0u8; 4];
+    let s = (byte as char).encode_utf8(&mut buf);
+    GetResult::Value(Value::sso(s).unwrap_or(Value::from_bits(0)))
+}
     } else {
         GetResult::Error("Expected a list or string for index".into())
     }
@@ -437,6 +445,17 @@ pub fn execute_bytecode<'a>(
 
                 // ── Control flow ──────────────────────────────────────────
                 Instruction::Jump(target) => { frames.last_mut().unwrap().pc = *target; continue; }
+                Instruction::JumpIfNotLess { var, end, target } => {
+                    let v = frames.last_mut().unwrap().registers[*var];
+                    let e = frames.last_mut().unwrap().registers[*end];
+                    if let (Some(vn), Some(en)) = (v.as_number(), e.as_number()) {
+                        if vn >= en {
+                            frames.last_mut().unwrap().pc = *target;
+                            continue;
+                        }
+                    }
+                    frames.last_mut().unwrap().pc += 1;
+                }
                 Instruction::JumpIfFalse { cond, target } => {
                     if !frames.last_mut().unwrap().registers[*cond].is_truthy() {
                         frames.last_mut().unwrap().pc = *target;
@@ -675,7 +694,7 @@ pub fn execute_bytecode<'a>(
                         if let Some(o) = o
                             && let ManagedObject::BoundMethod { receiver, name_id } = &o.obj
                         {
-                            let method   = ctx.string_pool.get(*name_id as usize).map(|s| s.to_string()).unwrap_or_default();
+                            let method = ctx.string_pool.get(*name_id as usize).map(|s| s.as_ref()).unwrap_or("");
                             let receiver = *receiver;
 
                             if method == "pad" {

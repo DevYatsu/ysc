@@ -145,6 +145,10 @@ pub enum Instruction {
     Jump(usize),
     /// Conditional jump: jump to `target` when `cond` register is falsy.
     JumpIfFalse { cond: usize, target: usize },
+    /// Jump to `target` when `var >= end` (for‑loop step‑>0 optimisation).
+    /// Merges the common `Lt cond,var,end` + `JumpIfFalse cond,target` pair
+    /// into a single instruction, saving a register and a dispatch cycle.
+    JumpIfNotLess { var: usize, end: usize, target: usize },
 
     //  Arithmetic ─
     /// Add numbers or concatenate strings.

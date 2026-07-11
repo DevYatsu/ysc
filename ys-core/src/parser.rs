@@ -873,18 +873,9 @@ impl<'source> Parser<'source> {
         });
 
         let loop_start = instructions.len();
-        let cond = self.alloc_reg();
-
-        // For simplicity, we assume step > 0 logic for the loop condition (var < end).
-        // (A more thorough implementation might check the sign of step)
-        instructions.push(Instruction::Lt {
-            dst: cond,
-            lhs: var_idx,
-            rhs: end_reg,
-            loc,
-        });
 
         let jump_idx = instructions.len();
+        // Placeholder replaced with JumpIfNotLess after the body.
         instructions.push(Instruction::Jump(0));
 
         self.loop_continues.push(Vec::new());
@@ -903,8 +894,9 @@ impl<'source> Parser<'source> {
         });
 
         instructions.push(Instruction::Jump(loop_start));
-        instructions[jump_idx] = Instruction::JumpIfFalse {
-            cond,
+        instructions[jump_idx] = Instruction::JumpIfNotLess {
+            var: var_idx,
+            end: end_reg,
             target: instructions.len(),
         };
         Ok(())
