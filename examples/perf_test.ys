@@ -1,18 +1,18 @@
-fn fib ( n) {
+fun fib ( n) {
   if n < 2 {
     return n
   }
   return fib ( n - 1) + fib ( n - 2)
 }
-fn heavy_work ( iterations) {
-  mut i : 0
-  mut acc : 0
+fun heavy_work ( iterations) {
+  i = 0
+  acc = 0
   while i < iterations {
-    acc : acc + 1
-    let l : [ i, acc, i + acc]
-    i : i + 1
+    acc = acc + 1
+    l = [ i, acc, i + acc]
+    i = i + 1
   }
   fib ( 20)
 }
-let iterations : 100000
+iterations = 100000
 heavy_work ( iterations)

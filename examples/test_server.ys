@@ -1,5 +1,5 @@
-fn handle ( req) {
-  let start : time ()
+fun handle ( req) {
+  start = time ()
   print ( "--- Request Start ---")
   print ( req)
   print ( "--- Request End ---")

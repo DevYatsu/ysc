@@ -1,9 +1,9 @@
-mut g : 0
-fn task ( id) {
-  mut i : 0
+g = 0
+fun task ( id) {
+  i = 0
   while i < 1000 {
-    g : g + 1
-    i : i + 1
+    g = g + 1
+    i = i + 1
   }
 }
 task ( 0)

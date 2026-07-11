@@ -1,9 +1,9 @@
-fn add ( a, b) {
+fun add ( a, b) {
   return a + b
 }
-let res : add ( 10, 20)
+res = add ( 10, 20)
 print ( "10 + 20 =", res)
-fn fib ( n) {
+fun fib ( n) {
   if n < 2 {
     return n
   }

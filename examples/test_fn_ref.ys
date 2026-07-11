@@ -1,7 +1,7 @@
-fn handle ( req) {
+fun handle ( req) {
   return "Handled: " + req
 }
-fn logger ( msg, callback) {
+fun logger ( msg, callback) {
   print ( "Log: " + msg)
   print ( "Callback says: " + callback ( "test data"))
 }

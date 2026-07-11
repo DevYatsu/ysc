@@ -1,10 +1,10 @@
-let a : "Hello, "
-let b : "World!"
-let c : a + b
+a = "Hello, "
+b = "World!"
+c = a + b
 print ( c)
-let s1 : "Small"
-let s2 : "JIT"
-let s3 : s1 + " " + s2
+s1 = "Small"
+s2 = "JIT"
+s3 = s1 + " " + s2
 print ( s3)
 if s3 == "Small JIT" {
   print ( "SUCCESS")
@@ -12,9 +12,9 @@ if s3 == "Small JIT" {
 else {
   print ( "FAILURE")
 }
-mut g1 : "Base"
-fn append_to_g ( suffix) {
-  g1 : g1 + suffix
+g1 = "Base"
+fun append_to_g ( suffix) {
+  g1 = g1 + suffix
 }
 append_to_g ( "ment")
 print ( g1)

@@ -1,8 +1,8 @@
-let short : "hi"
-let long : "this is a long string that definitely won't fit in SSO"
+short = "hi"
+long = "this is a long string that definitely won't fit in SSO"
 print ( "Short:", short)
 print ( "Long:", long)
-mut x : 10
+x = 10
 if x > 5 {
   print ( x)
 }
@@ -10,5 +10,5 @@ else {
   print ( "small")
 }
 while x < 20 {
-  x : x + 1
+  x = x + 1
 }

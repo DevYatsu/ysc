@@ -1,5 +1,5 @@
-fn assert_not ( val, expected) {
-  let res : ! val
+fun assert_not ( val, expected) {
+  res = ! val
   if res == expected {
     print ( "Success: !" + str ( val) + " is " + str ( expected))
   }

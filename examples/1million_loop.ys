@@ -1,7 +1,7 @@
-let now : timestamp ()
-mut x : 1000000
+now = timestamp ()
+x = 1000000
 print ( "Ready... Go!")
 while x > 0 {
-  x : x - 1
+  x = x - 1
 }
 print ( "Finished. Run time = " + str(now.elapsed) + " seconds.")

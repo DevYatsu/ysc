@@ -1,18 +1,18 @@
-let now : timestamp ()
-let ANSWER : 78498
-let MAX_NUMBER_TO_CHECK : 1000000
-let prime_mask : []
+now = timestamp ()
+ANSWER = 78498
+MAX_NUMBER_TO_CHECK = 1000000
+prime_mask = []
 prime_mask .pad ( MAX_NUMBER_TO_CHECK + 1, true)
-prime_mask [ 0] : false
-prime_mask [ 1] : false
-mut total_primes_found : 0
+prime_mask[0] = false
+prime_mask[1] = false
+total_primes_found = 0
 for p in 2 .. MAX_NUMBER_TO_CHECK + 1 {
-  if ! prime_mask [ p] {
+  if ! prime_mask[p] {
     continue
   }
-  total_primes_found : total_primes_found + 1
+  total_primes_found = total_primes_found + 1
   for i in ( 2 * p .. MAX_NUMBER_TO_CHECK + 1) .step ( p) {
-    prime_mask [ i] : false
+    prime_mask[i] = false
   }
 }
 print ( "Total " + str ( total_primes_found) + " primes <= " + str ( MAX_NUMBER_TO_CHECK))

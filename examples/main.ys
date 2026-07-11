@@ -1,7 +1,7 @@
 print ( "--- Extensible API Demo ---")
-let time_start : time ()
+time_start = time ()
 print ( "Task 1: Concurrent print")
 print ( "Task 2: Parenthesized print")
-let my_list : [ 1, 2, 3]
+my_list = [ 1, 2, 3]
 print ( "My list:", my_list)
 print ( "Done in", ( time () - time_start) * 1000000, "microseconds")

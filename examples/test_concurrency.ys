@@ -1,9 +1,9 @@
-fn check ( id) {
-  mut x : 0
-  mut i : 0
+fun check ( id) {
+  x = 0
+  i = 0
   while i < 1000 {
-    x : x + 1
-    i : i + 1
+    x = x + 1
+    i = i + 1
   }
   if x != 1000 {
     print ( "FAIL Task", id, ": x is", x)
