@@ -5,10 +5,11 @@
 //!
 //! ## Design notes
 //! - Register arrays are `Vec<Value>` — each frame owns its registers.
-//! - The frame stack is a plain `Vec<CallFrame>` on the async task stack.
+//! - The frame stack is a plain `Vec<CallFrame>`.
 //!   Using a `Vec` and popping frames avoids indirect-recursion and keeps
 //!   stack depth constant from Rust's perspective.
-//! - The yield every 16 384 instructions prevents starvation of other tasks.
+
+use rayon::prelude::*;
 
 pub mod setup;
 
@@ -861,16 +862,27 @@ pub fn execute_bytecode(
                                             }
                                             ctx.alloc(ManagedObject::List(out))
                                         }
-                                        "includes" => Value::bool(elems.iter().any(|v| v.to_bits() == read(0).to_bits())),
+                                        "includes" => Value::bool(
+                                            if elems.len() > 10000 { elems.par_iter().any(|v| v.to_bits() == read(0).to_bits()) }
+                                            else { elems.iter().any(|v| v.to_bits() == read(0).to_bits()) }),
                                         "index_of" => Value::number(elems.iter().position(|v| v.to_bits() == read(0).to_bits()).map(|i| i as f64).unwrap_or(-1.0)),
                                         "sorted" => {
                                             let mut e = elems;
-                                            for i in 1..e.len() {
-                                                let mut j = i;
-                                                while j > 0 {
-                                                    let (a, b) = (e[j-1].as_number(), e[j].as_number());
-                                                    if let (Some(a), Some(b)) = (a, b) { if a <= b { break; } e.swap(j-1, j); } else { break; }
-                                                    j -= 1;
+                                            if e.len() > 10000 {
+                                                e.par_sort_unstable_by(|a, b| {
+                                                    match (a.as_number(), b.as_number()) {
+                                                        (Some(an), Some(bn)) => an.partial_cmp(&bn).unwrap_or(std::cmp::Ordering::Equal),
+                                                        _ => std::cmp::Ordering::Equal,
+                                                    }
+                                                });
+                                            } else {
+                                                for i in 1..e.len() {
+                                                    let mut j = i;
+                                                    while j > 0 {
+                                                        let (a, b) = (e[j-1].as_number(), e[j].as_number());
+                                                        if let (Some(a), Some(b)) = (a, b) { if a <= b { break; } e.swap(j-1, j); } else { break; }
+                                                        j -= 1;
+                                                    }
                                                 }
                                             }
                                             ctx.alloc(ManagedObject::List(e))

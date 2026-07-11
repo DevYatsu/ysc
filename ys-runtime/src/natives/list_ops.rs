@@ -5,6 +5,9 @@
 //!
 //! These are part of the prelude — no import needed.
 
+use rayon::prelude::*;
+const PARALLEL_THRESHOLD: usize = 10000;
+
 use crate::context::{Context, NativeFn};
 use crate::heap::ManagedObject;
 use std::sync::Arc;
@@ -112,7 +115,12 @@ fn native_every(ctx: &Arc<Context>, args: &[Value]) -> Result<Value, JitError> {
 fn native_includes(ctx: &Arc<Context>, args: &[Value]) -> Result<Value, JitError> {
     let elems = get_list(args, "includes", ctx)?;
     let target = args.get(1).copied().unwrap_or(Value::from_bits(0));
-    Ok(Value::bool(elems.iter().any(|v| v.to_bits() == target.to_bits())))
+    let found = if elems.len() > PARALLEL_THRESHOLD {
+        elems.par_iter().any(|v| v.to_bits() == target.to_bits())
+    } else {
+        elems.iter().any(|v| v.to_bits() == target.to_bits())
+    };
+    Ok(Value::bool(found))
 }
 
 fn native_index_of(ctx: &Arc<Context>, args: &[Value]) -> Result<Value, JitError> {
@@ -123,12 +131,21 @@ fn native_index_of(ctx: &Arc<Context>, args: &[Value]) -> Result<Value, JitError
 
 fn native_sorted(ctx: &Arc<Context>, args: &[Value]) -> Result<Value, JitError> {
     let mut elems = get_list(args, "sorted", ctx)?;
-    for i in 1..elems.len() {
-        let mut j = i;
-        while j > 0 {
-            let (a, b) = (elems[j-1].as_number(), elems[j].as_number());
-            if let (Some(a), Some(b)) = (a, b) { if a <= b { break; } elems.swap(j-1, j); } else { break; }
-            j -= 1;
+    if elems.len() > PARALLEL_THRESHOLD {
+        elems.par_sort_unstable_by(|a, b| {
+            match (a.as_number(), b.as_number()) {
+                (Some(an), Some(bn)) => an.partial_cmp(&bn).unwrap_or(std::cmp::Ordering::Equal),
+                _ => std::cmp::Ordering::Equal,
+            }
+        });
+    } else {
+        for i in 1..elems.len() {
+            let mut j = i;
+            while j > 0 {
+                let (a, b) = (elems[j-1].as_number(), elems[j].as_number());
+                if let (Some(a), Some(b)) = (a, b) { if a <= b { break; } elems.swap(j-1, j); } else { break; }
+                j -= 1;
+            }
         }
     }
     Ok(ctx.alloc(ManagedObject::List(elems)))
