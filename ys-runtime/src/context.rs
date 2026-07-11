@@ -1,6 +1,6 @@
 use crate::heap::{Closure, Heap, ManagedObject, SyncCell};
 use std::sync::Arc;
-use ys_core::compiler::{Loc, UserFunction, Value};
+use ys_core::compiler::{Loc, Value};
 use ys_core::error::JitError;
 
 //  Backend trait 
@@ -47,9 +47,6 @@ pub struct Context {
     pub string_pool: Arc<[Arc<str>]>,
     pub globals:    SyncCell<Vec<Value>>,
     pub callables:  rustc_hash::FxHashMap<u32, Callable>,
-    /// All compiled user-defined functions, indexed by position in the
-    /// original `Program.functions` array.
-    pub functions:  Arc<[UserFunction]>,
 }
 
 impl Context {
@@ -133,8 +130,8 @@ impl Context {
                     JitError::runtime("Expected a closure", loc.line as usize, loc.col as usize)
                 })?;
             match &o.obj {
-                ManagedObject::Closure(Closure { func_index, captures }) => crate::heap::Closure {
-                    func_index: *func_index,
+                ManagedObject::Closure(Closure { name_id, captures }) => crate::heap::Closure {
+                    name_id: *name_id,
                     captures: captures.clone(),
                 },
                 _ => {
@@ -146,7 +143,12 @@ impl Context {
                 }
             }
         };
-        let func = &ctx.functions[cl.func_index as usize];
+        let callable = ctx.get_callable(cl.name_id).ok_or_else(|| {
+            JitError::runtime("Unknown closure function", loc.line as usize, loc.col as usize)
+        })?;
+        let Callable::User(func) = callable else {
+            return Err(JitError::runtime("Closure must be a user function", loc.line as usize, loc.col as usize));
+        };
         let total_params = cl.captures.len() + args.len();
         if total_params != func.params_count {
             return Err(JitError::runtime(

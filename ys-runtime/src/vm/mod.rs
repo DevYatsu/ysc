@@ -706,12 +706,12 @@ pub fn execute_bytecode<'a>(
                 }
 
                 // ── Closures ──────────────────────────────────────────────
-                Instruction::MakeClosure { dst, func_index, captures } => {
+                Instruction::MakeClosure { dst, name_id, captures } => {
                     let mut vals = Vec::with_capacity(captures.len());
                     for &reg in captures.iter() {
                         vals.push(frames[fi].registers[reg]);
                     }
-                    let cl = crate::heap::Closure { func_index: *func_index as u32, captures: vals };
+                    let cl = crate::heap::Closure { name_id: *name_id, captures: vals };
                     frames[fi].registers[*dst] = ctx.alloc(ManagedObject::Closure(cl));
                     frames[fi].pc += 1;
                 }
@@ -834,10 +834,14 @@ pub fn execute_bytecode<'a>(
                         if let Some(o) = o
                             && let ManagedObject::Closure(cl) = &o.obj
                         {
-                            let func_idx = cl.func_index as usize;
                             let args_regs = &*box_data.args_regs;
                             let total_args = cl.captures.len() + args_regs.len();
-                            let func = &ctx.functions[func_idx];
+                            let callable = ctx.get_callable(cl.name_id).ok_or_else(|| {
+                                JitError::runtime("Unknown closure function", loc.line as usize, loc.col as usize)
+                            })?;
+                            let Callable::User(func) = callable else {
+                                return Err(JitError::runtime("Closure must be a user function", loc.line as usize, loc.col as usize));
+                            };
                             if total_args != func.params_count {
                                 return Err(JitError::runtime(
                                     format!("Closure arity mismatch: expected {}, got {}", func.params_count, total_args),

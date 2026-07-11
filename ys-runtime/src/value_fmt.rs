@@ -33,7 +33,7 @@ pub fn stringify_value(ctx: &Context, val: Value) -> String {
                     format!("<bound method {} of {}>", method, stringify_value(ctx, *receiver))
                 }
                 ManagedObject::Closure(cl) => {
-                    format!("<Closure#{}>", cl.func_index)
+                    format!("<Closure#{}>", cl.name_id)
                 }
             };
         }

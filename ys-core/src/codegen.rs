@@ -661,8 +661,8 @@ impl Codegen {
         if !matches!(func.instructions.last(), Some(Instruction::Return(_))) {
             func.emit(Instruction::Return(Some(result_reg)));
         }
-        let func_idx = self.functions.len();
-        let name_id = self.intern(&format!("__closure_{}", func_idx));
+        let closure_name = format!("__closure_{}", self.functions.len());
+        let name_id = self.intern(&closure_name);
         self.functions.push(UserFunction {
             name_id,
             params_count: params.len(),
@@ -675,7 +675,7 @@ impl Codegen {
         let dst = self.alloc_reg();
         self.emit(Instruction::MakeClosure {
             dst,
-            func_index: func_idx,
+            name_id,
             captures: Arc::from(capture_regs),
         });
         Ok(dst)

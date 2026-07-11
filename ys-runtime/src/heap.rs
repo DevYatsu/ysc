@@ -47,8 +47,9 @@ impl<T> SyncCell<T> {
 // ── Object variants ───────────────────────────────────────────────────────────
 
 /// A closure — a function bundled with its captured environment.
+/// Uses a name_id into the unified callables map (same as named calls).
 pub struct Closure {
-    pub func_index: u32,
+    pub name_id: u32,
     pub captures: Vec<Value>,
 }
 

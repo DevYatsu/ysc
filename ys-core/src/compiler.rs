@@ -202,7 +202,10 @@ pub enum Instruction {
 
     //  Closures 
     /// Create a closure that captures current register values.
-    MakeClosure { dst: usize, func_index: usize, captures: Arc<[usize]> },
+    /// Create a closure that captures current register values.
+    /// The closure calls a function by its interned name_id through the
+    /// unified callables map — the same path as any named function call.
+    MakeClosure { dst: usize, name_id: u32, captures: Arc<[usize]> },
 
     //  Calls 
     /// Call a statically-known function by its string-pool name ID.

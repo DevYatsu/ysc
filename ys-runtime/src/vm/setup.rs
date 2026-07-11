@@ -47,7 +47,6 @@ pub async fn run_interpreter(program: Program) -> Result<(), JitError> {
         globals: SyncCell::new(vec![Value::from_bits(0); program.globals_count]),
         string_pool: Arc::clone(&program.string_pool),
         callables: callable_map,
-        functions:  Arc::clone(&program.functions),
         heap: Heap {
             objects:        SyncCell::new(Vec::with_capacity(1024)),
             metadata:       SyncCell::new(HeapMetadata {
