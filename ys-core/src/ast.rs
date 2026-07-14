@@ -49,6 +49,7 @@ pub enum AstNode {
     While { cond: Box<AstNode>, body: AstBlock, loc: Loc },
     For   { var: String, iter: Box<AstNode>, body: AstBlock, loc: Loc },
     Return { value: Option<Box<AstNode>>, loc: Loc },
+    Yield(Box<AstNode>, Loc),
 
     //  Switch
     Switch {

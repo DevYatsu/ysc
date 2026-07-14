@@ -282,6 +282,15 @@ impl Codegen {
                 self.emit(Instruction::Return(reg));
                 Ok(0)
             }
+            AstNode::Yield(expr, loc) => {
+                let value_reg = self.compile_node(expr)?;
+                self.emit(Instruction::Yield { dst: 0, value: value_reg, gen_reg: 0, loc: *loc });
+                // After yield, the function suspends and returns via Yield instruction.
+                // The compiler emits Return(0) as a safety net, but the actual return
+                // happens inside the Yield instruction (which pops the frame). This
+                // Return should never be reached — it's dead code after Yield.
+                Ok(0)
+            }
 
             //  Switch
             AstNode::Switch { expr, arms, .. } => {
@@ -610,14 +619,6 @@ impl Codegen {
 
             //  Modules — not yet implemented in runtime, compile as no-op
             AstNode::Use { .. } => Ok(0),
-
-            //  Misc
-            _ => {
-                Err(JitError::parsing(
-                    "Internal compiler error: unsupported AST node in codegen",
-                    0, 0,
-                ))
-            }
         }
     }
 
@@ -760,9 +761,12 @@ impl Codegen {
 
     //  For loop
 
-    fn compile_for(&mut self, var: &str, iter: &AstNode, body: &[AstNode], _loc: Loc) -> Result<usize, JitError> {
-        // Inline known Range nodes to avoid heap round-trip.
-        let (start_reg, end_reg, step_reg) = if let AstNode::Range { start, end, step, .. } = iter {
+    fn compile_for(&mut self, var: &str, iter: &AstNode, body: &[AstNode], loc: Loc) -> Result<usize, JitError> {
+        let iter_r = self.compile_node(iter)?;
+
+        // Build a Range object at runtime if it's a compile-time Range AST node
+        // so that ForNext can handle it uniformly with lists and objects.
+        let iter_reg = if let AstNode::Range { start, end, step, .. } = iter {
             let s = self.compile_node(start)?;
             let e = self.compile_node(end)?;
             let st = match step {
@@ -773,30 +777,50 @@ impl Codegen {
                     r
                 }
             };
-            (s, e, st)
+            let dst = self.alloc_reg();
+            self.emit(Instruction::Range { dst, start: s, end: e, step: Some(st), loc });
+            dst
         } else {
-            let iter_r = self.compile_node(iter)?;
-            let s = self.alloc_reg();
-            let e = self.alloc_reg();
-            let st = self.alloc_reg();
-            self.emit(Instruction::RangeInfo { range: iter_r, start_dst: s, end_dst: e, step_dst: st });
-            (s, e, st)
+            iter_r
         };
+
+        // Index register (starts at 0, incremented each iteration by ForNext)
+        let idx_reg = self.alloc_reg();
+        self.emit(Instruction::LoadLiteral { dst: idx_reg, val: Value::from_bits(0) });
+
+        // "Has more" flag register
+        let done_reg = self.alloc_reg();
         let var_reg = self.alloc_reg();
+
         let was_in_fn = self.is_in_function;
-        self.is_in_function = true; // for loop vars are always locals
+        self.is_in_function = true;
         self.locals.insert(var.to_string(), VarInfo { idx: var_reg, is_global: false });
-        self.emit(Instruction::Move { dst: var_reg, src: start_reg });
+
         let loop_start = self.instructions.len();
-        let jump_idx = self.instructions.len();
-        self.emit(Instruction::Jump(0));
+
+        // ForNext: dst_val = iterable[idx_reg], dst_done = has_more, idx_reg++
+        self.emit(Instruction::ForNext {
+            dst_val: var_reg,
+            dst_done: done_reg,
+            iterable: iter_reg,
+            idx_reg,
+            loc,
+        });
+
+        // If not has_more → exit
+        let exit_jump = self.instructions.len();
+        self.emit(Instruction::JumpIfFalse { cond: done_reg, target: 0 });
+
+        // Body
         self.compile_block(body)?;
-        self.emit(Instruction::AddNum { dst: var_reg, lhs: var_reg, rhs: step_reg });
+
+        // Loop back
         self.emit(Instruction::Jump(loop_start));
-        let end = self.instructions.len();
-        self.instructions[jump_idx] = Instruction::JumpIfNotLess {
-            var: var_reg, end: end_reg, target: end,
-        };
+
+        // Patch exit jump
+        let end_pos = self.instructions.len();
+        self.instructions[exit_jump] = Instruction::JumpIfFalse { cond: done_reg, target: end_pos };
+
         self.locals.remove(var);
         self.is_in_function = was_in_fn;
         Ok(0)

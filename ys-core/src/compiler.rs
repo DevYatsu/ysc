@@ -270,6 +270,12 @@ pub enum Instruction {
     Return(Option<usize>),
     /// Await a Promise — yields to the event loop if pending.
     Await { dst: usize, promise: usize, loc: Loc },
+    /// Yield a value from a generator function.
+    Yield { dst: usize, value: usize, gen_reg: usize, loc: Loc },
+    /// Get the current element by index when iterating a list/object/range.
+    /// dst_val = iterable[idx]; idx_reg += 1
+    /// Advances idx_reg and stores the current element.
+    ForNext { dst_val: usize, dst_done: usize, iterable: usize, idx_reg: usize, loc: Loc },
 }
 
 //  Instruction payloads

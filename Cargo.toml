@@ -4,6 +4,7 @@ members = [
     "ys-runtime",
     "ys-cli",
     "ys-lsp",
+    "ys-wasm",
 ]
 resolver = "2"
 

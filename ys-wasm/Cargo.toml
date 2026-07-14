@@ -1,0 +1,14 @@
+[package]
+name = "ys-wasm"
+version = "0.1.0"
+edition = "2024"
+description = "YatsuScript WASM bindings"
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+ys-core    = { path = "../ys-core" }
+ys-runtime = { path = "../ys-runtime", default-features = false }
+wasm-bindgen = "0.2"

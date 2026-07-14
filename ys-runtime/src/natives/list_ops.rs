@@ -5,6 +5,7 @@
 //!
 //! These are part of the prelude — no import needed.
 
+#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 const PARALLEL_THRESHOLD: usize = 10000;
 
@@ -115,11 +116,14 @@ fn native_every(ctx: &Arc<Context>, args: &[Value]) -> Result<Value, JitError> {
 fn native_includes(ctx: &Arc<Context>, args: &[Value]) -> Result<Value, JitError> {
     let elems = get_list(args, "includes", ctx)?;
     let target = args.get(1).copied().unwrap_or(Value::from_bits(0));
+    #[cfg(feature = "parallel")]
     let found = if elems.len() > PARALLEL_THRESHOLD {
         elems.par_iter().any(|v| v.to_bits() == target.to_bits())
     } else {
         elems.iter().any(|v| v.to_bits() == target.to_bits())
     };
+    #[cfg(not(feature = "parallel"))]
+    let found = elems.iter().any(|v| v.to_bits() == target.to_bits());
     Ok(Value::bool(found))
 }
 
@@ -131,6 +135,7 @@ fn native_index_of(ctx: &Arc<Context>, args: &[Value]) -> Result<Value, JitError
 
 fn native_sorted(ctx: &Arc<Context>, args: &[Value]) -> Result<Value, JitError> {
     let mut elems = get_list(args, "sorted", ctx)?;
+    #[cfg(feature = "parallel")]
     if elems.len() > PARALLEL_THRESHOLD {
         elems.par_sort_unstable_by(|a, b| {
             match (a.as_number(), b.as_number()) {
@@ -139,16 +144,23 @@ fn native_sorted(ctx: &Arc<Context>, args: &[Value]) -> Result<Value, JitError> 
             }
         });
     } else {
-        for i in 1..elems.len() {
-            let mut j = i;
-            while j > 0 {
-                let (a, b) = (elems[j-1].as_number(), elems[j].as_number());
-                if let (Some(a), Some(b)) = (a, b) { if a <= b { break; } elems.swap(j-1, j); } else { break; }
-                j -= 1;
-            }
+        insertion_sort_by_key(&mut elems);
+    }
+    #[cfg(not(feature = "parallel"))]
+    insertion_sort_by_key(&mut elems);
+    Ok(ctx.alloc(ManagedObject::List(elems)))
+}
+
+/// Simple insertion sort fallback (used when rayon isn't available).
+fn insertion_sort_by_key(elems: &mut [Value]) {
+    for i in 1..elems.len() {
+        let mut j = i;
+        while j > 0 {
+            let (a, b) = (elems[j-1].as_number(), elems[j].as_number());
+            if let (Some(a), Some(b)) = (a, b) { if a <= b { break; } elems.swap(j-1, j); } else { break; }
+            j -= 1;
         }
     }
-    Ok(ctx.alloc(ManagedObject::List(elems)))
 }
 
 fn native_reversed(ctx: &Arc<Context>, args: &[Value]) -> Result<Value, JitError> {

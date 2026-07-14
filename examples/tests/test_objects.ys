@@ -1,0 +1,36 @@
+// Object method tests
+
+let obj = {name: "Alice", age: 30, city: "Paris"}
+
+// .keys()
+print("keys:")
+let k = obj.keys()
+print(len(k))                  // 3
+
+// .values()
+print("values:")
+let v = obj.values()
+print(len(v))                  // 3
+
+// .has()
+print("has:")
+print(obj.has("name"))         // true
+print(obj.has("xyz"))          // false
+
+// .len()
+print("len:")
+print(obj.len())               // 3
+
+// Nested object
+let nested = {a: {b: 1, c: 2}, d: 3}
+print("nested keys:")
+print(nested.len())            // 2
+print(nested.a.len())          // 2
+print(nested.a.b)              // 1
+
+// Object with various value types
+let mixed = {num: 42, str: "hi", flag: true}
+print("mixed:")
+print(mixed.num)               // 42
+print(mixed.str)               // hi
+print(mixed.flag)              // true

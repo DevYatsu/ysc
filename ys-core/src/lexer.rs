@@ -141,6 +141,9 @@ pub enum Token<'source> {
     /// 'while' loop keyword.
     #[token("while")]
     While,
+    /// 'yield' keyword for generator functions.
+    #[token("yield")]
+    Yield,
 
     // -- Punctuation / operators --------------------------------------------
     // Multi-character tokens must precede single-character tokens that share

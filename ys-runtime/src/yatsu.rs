@@ -216,7 +216,7 @@ impl Yatsu {
         // Register user-defined functions from the compiled program
         for func in program.functions.iter() {
             if let Some(name) = program.string_pool.get(func.name_id as usize) {
-                let mut callables = self.ctx.callables.get_mut();
+                let callables = self.ctx.callables.get_mut();
                 let idx = func.name_id as usize;
                 if idx >= callables.len() {
                     callables.resize(idx + 1, None);
@@ -306,7 +306,7 @@ impl Yatsu {
         self.ctx.callables_by_name.get_mut().insert(name.to_string(), callable);
         // Also try to insert into callables Vec if the name is in the string pool
         if let Some(pos) = self.ctx.string_pool.iter().position(|s| s.as_ref() == name) {
-            let mut callables = self.ctx.callables.get_mut();
+            let callables = self.ctx.callables.get_mut();
             if pos >= callables.len() {
                 callables.resize(pos + 1, None);
             }

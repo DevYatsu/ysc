@@ -1,0 +1,39 @@
+// Number method tests
+
+// .to_string()
+print("to_string:")
+print(42.to_string())          // 42
+print((-3.14).to_string())     // -3.14
+
+// .ceil() / .floor() / .round()
+print("rounding:")
+print(3.14.ceil())             // 4
+print(3.14.floor())            // 3
+print(3.5.round())             // 4
+print(3.4.round())             // 3
+
+// .abs()
+print("abs:")
+print((-5).abs())              // 5
+print(5.abs())                 // 5
+
+// .sqrt()
+print("sqrt:")
+print(9.sqrt())                // 3
+print(0.sqrt())                // 0
+
+// .pow()
+print("pow:")
+print(2.pow(3))                // 8
+print(10.pow(0))               // 1
+print(10.pow(1))               // 10
+
+// .is_integer()
+print("is_integer:")
+print(42.is_integer())         // true
+print(3.14.is_integer())       // false
+
+// .to_int()
+print("to_int:")
+print(3.9.to_int())            // 3
+print((-3.9).to_int())         // -3

@@ -106,7 +106,7 @@ pub fn run_interpreter(program: Program) -> Result<(), JitError> {
             for comp in completions {
                 // Extract continuation before replacing
                 let continuation = {
-                    let mut objs = ctx.heap.objects.get_mut();
+                    let objs = ctx.heap.objects.get_mut();
                     if let Some(Some(slot)) = objs.get_mut(comp.promise_oid as usize) {
                         match &mut slot.obj {
                             ManagedObject::Promise(PromiseState::Pending { continuation: c }) => {
@@ -120,7 +120,7 @@ pub fn run_interpreter(program: Program) -> Result<(), JitError> {
                     Ok(body) => {
                         let val = Value::sso(&body)
                             .unwrap_or_else(|| ctx.alloc(ManagedObject::String(Arc::from(body))));
-                        let mut objs = ctx.heap.objects.get_mut();
+                        let objs = ctx.heap.objects.get_mut();
                         if let Some(Some(slot)) = objs.get_mut(comp.promise_oid as usize) {
                             slot.obj = ManagedObject::Promise(PromiseState::Resolved(val));
                         }
@@ -129,7 +129,7 @@ pub fn run_interpreter(program: Program) -> Result<(), JitError> {
                         let name_id = ctx.string_pool.iter()
                             .position(|s| s.as_ref() == failure_name)
                             .unwrap_or(0) as u32;
-                        let mut objs = ctx.heap.objects.get_mut();
+                        let objs = ctx.heap.objects.get_mut();
                         if let Some(Some(slot)) = objs.get_mut(comp.promise_oid as usize) {
                             slot.obj = ManagedObject::Promise(PromiseState::Rejected(name_id));
                         }
@@ -160,7 +160,7 @@ pub fn run_interpreter(program: Program) -> Result<(), JitError> {
                 };
                 // Extract continuation BEFORE replacing the promise on the heap
                 let continuation = {
-                    let mut objs = ctx.heap.objects.get_mut();
+                    let objs = ctx.heap.objects.get_mut();
                     if let Some(Some(slot)) = objs.get_mut(task.promise_oid as usize) {
                         match &mut slot.obj {
                             ManagedObject::Promise(PromiseState::Pending { continuation: c }) => {
@@ -172,7 +172,7 @@ pub fn run_interpreter(program: Program) -> Result<(), JitError> {
                 };
                 match result {
                     Ok(val) => {
-                        let mut objs = ctx.heap.objects.get_mut();
+                        let objs = ctx.heap.objects.get_mut();
                         if let Some(Some(slot)) = objs.get_mut(task.promise_oid as usize) {
                             slot.obj = ManagedObject::Promise(PromiseState::Resolved(val));
                         }
@@ -180,7 +180,7 @@ pub fn run_interpreter(program: Program) -> Result<(), JitError> {
                     Err(_) => {
                         let failure_id = ctx.string_pool.iter()
                             .position(|s| s.as_ref() == "TypeError").unwrap_or(0) as u32;
-                        let mut objs = ctx.heap.objects.get_mut();
+                        let objs = ctx.heap.objects.get_mut();
                         if let Some(Some(slot)) = objs.get_mut(task.promise_oid as usize) {
                             slot.obj = ManagedObject::Promise(PromiseState::Rejected(failure_id));
                         }
@@ -207,7 +207,7 @@ pub fn run_interpreter(program: Program) -> Result<(), JitError> {
                 objects.get(oid as usize)
                     .and_then(|o| o.as_ref())
                     .and_then(|o| match &o.obj {
-                        ManagedObject::Promise(ps) => Some(ps.clone()),
+                        ManagedObject::Promise(ps) => Some(ps),
                         _ => None,
                     })
             };
@@ -265,16 +265,15 @@ pub fn run_interpreter(program: Program) -> Result<(), JitError> {
                 if all_done && any_changed {
                     let final_list = ctx.alloc(ManagedObject::List(resolved_vals));
                     // Mutation: this drops the old Compound (including `state`'s data)
-                    let mut objs = ctx.heap.objects.get_mut();
+                    let objs = ctx.heap.objects.get_mut();
                     if let Some(Some(slot)) = objs.get_mut(oid as usize) {
                         slot.obj = ManagedObject::Promise(PromiseState::Resolved(final_list));
                     }
-                    drop(objs);
                     // Resume continuation using the cloned data
                     execute_bytecode(&cont_instrs, ctx.clone(), cont_regs, cont_pc)?;
                 } else if any_changed {
                     {
-                        let mut objs = ctx.heap.objects.get_mut();
+                        let objs = ctx.heap.objects.get_mut();
                         if let Some(Some(slot)) = objs.get_mut(oid as usize) {
                             if let ManagedObject::Promise(PromiseState::Compound { sub_promises: sp, results: res, .. }) = &mut slot.obj {
                                 *sp = updated_sp;
@@ -292,7 +291,7 @@ pub fn run_interpreter(program: Program) -> Result<(), JitError> {
 
         if new_tasks.is_empty() { break; }
         {
-            let mut pending = ctx.pending_tasks.get_mut();
+            let pending = ctx.pending_tasks.get_mut();
             for v in new_tasks { pending.push(v); }
         }
     }

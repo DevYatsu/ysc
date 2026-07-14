@@ -119,6 +119,11 @@ impl<'source> AstParser<'source> {
                             else { Some(Box::new(self.parse_expression()?)) };
                 Ok(Some(AstNode::Return { value, loc }))
             }
+            Token::Yield => {
+                self.advance()?;
+                let value = self.parse_expression()?;
+                Ok(Some(AstNode::Yield(Box::new(value), loc)))
+            }
             Token::Switch => { self.advance()?; self.parse_switch().map(Some) }
             Token::Break  => { self.advance()?; Ok(Some(AstNode::Break(loc))) }
             Token::Async  => {

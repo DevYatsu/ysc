@@ -9,6 +9,7 @@
 //!   Using a `Vec` and popping frames avoids indirect-recursion and keeps
 //!   stack depth constant from Rust's perspective.
 
+#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 pub mod setup;
@@ -46,6 +47,18 @@ impl Backend for Interpreter {
 /// Allocate a zero-initialised register array of `count` slots.
 pub(crate) fn make_registers(count: usize) -> Vec<Value> {
     vec![Value::from_bits(0); count]
+}
+
+/// Insertion sort for numeric values (sequential fallback when rayon is absent).
+fn sort_insertion(elems: &mut [Value]) {
+    for i in 1..elems.len() {
+        let mut j = i;
+        while j > 0 {
+            let (a, b) = (elems[j-1].as_number(), elems[j].as_number());
+            if let (Some(a), Some(b)) = (a, b) { if a <= b { break; } elems.swap(j-1, j); } else { break; }
+            j -= 1;
+        }
+    }
 }
 
 /// Try to extract the resolved value from a Promise.  Returns:
@@ -356,7 +369,6 @@ fn handle_object_get(
     let obj_val = regs[obj];
     if let Some(oid) = obj_val.as_obj_id() {
         let heap = ctx.heap.objects.get();
-        // Safety: object ID is always valid.
         let o = unsafe { heap.get_unchecked(oid as usize) };
         if let Some(o) = o {
             return match &o.obj {
@@ -367,12 +379,16 @@ fn handle_object_get(
                         GetResult::BoundMethod(obj_val)
                     }
                 }
+                // Lists, ranges, closures, BoundMethods themselves, etc.
+                // all use BoundMethod dispatch for method calls.
                 _ => GetResult::BoundMethod(obj_val),
             };
         }
         GetResult::Error("Null object dereference".into())
     } else {
-        GetResult::Error("Expected object for property access".into())
+        // SSO strings, numbers, booleans — allow method dispatch
+        // by treating property access as BoundMethod creation.
+        GetResult::BoundMethod(obj_val)
     }
 }
 
@@ -643,6 +659,36 @@ pub fn execute_bytecode(
                     return Ok(ret);
                 }
 
+                Instruction::Yield { dst: _dst, value, gen_reg, loc: _loc } => {
+                    let _yielded = frames[fi].registers[*value];
+                    let gen_val = frames[fi].registers[*gen_reg];
+                    let save_pc = frames[fi].pc;
+                    let cont = Box::new(FrameState {
+                        instructions: frames[fi].instr_arc.clone(),
+                        registers: frames[fi].registers.clone(),
+                        pc: save_pc,
+                        return_to: frames[fi].return_to,
+                    });
+                    // Attach continuation to the generator promise
+                    if let Some(goid) = gen_val.as_obj_id() {
+                        let hl = ctx.heap.objects.get_mut();
+                        if let Some(Some(sl)) = hl.get_mut(goid as usize) {
+                            sl.obj = ManagedObject::Promise(
+                                PromiseState::Pending { continuation: Some(cont) }
+                            );
+                        }
+                    }
+                    // Pop frame and return generator to caller
+                    let fr = frames.pop().unwrap();
+                    if let Some(rt) = fr.return_to {
+                        frames.last_mut().unwrap().registers[rt.dst] = gen_val;
+                        frames.last_mut().unwrap().pc += 1;
+                    } else {
+                        return Ok(gen_val);
+                    }
+                    continue;
+                }
+
                 Instruction::Await { dst, promise, loc: _loc } => {
                     let pv = frames[fi].registers[*promise];
 
@@ -739,7 +785,7 @@ pub fn execute_bytecode(
                                 });
                                 // Attach to the promise object on the heap
                                 {
-                                    let mut objs = ctx.heap.objects.get_mut();
+                                    let objs = ctx.heap.objects.get_mut();
                                     if let Some(Some(slot)) = objs.get_mut(oid as usize) {
                                         if let ManagedObject::Promise(PromiseState::Pending { continuation: c }) = &mut slot.obj {
                                             *c = Some(continuation);
@@ -904,14 +950,29 @@ pub fn execute_bytecode(
                     let fr = &mut frames[fi];
                     let lv = fr.registers[*lhs];
                     let rv = fr.registers[*rhs];
-                    fr.registers[*dst] = Value::bool(lv.to_bits() == rv.to_bits() && (lv.to_bits() & QNAN) != QNAN);
+                    let both_plain = (lv.to_bits() & QNAN) != QNAN && (rv.to_bits() & QNAN) != QNAN;
+                    // For plain f64 values, NaN != NaN (IEEE 754).
+                    // For NaN-boxed types (SSO strings, objects, bools, etc.),
+                    // compare bits directly.
+                    let eq = if both_plain {
+                        lv.to_bits() == rv.to_bits() && (lv.to_bits() & QNAN) != QNAN
+                    } else {
+                        lv.to_bits() == rv.to_bits()
+                    };
+                    fr.registers[*dst] = Value::bool(eq);
                     fr.pc += 1;
                 }
                 Instruction::Ne { dst, lhs, rhs } => {
                     let fr = &mut frames[fi];
                     let lv = fr.registers[*lhs];
                     let rv = fr.registers[*rhs];
-                    fr.registers[*dst] = Value::bool(lv.to_bits() != rv.to_bits() || (lv.to_bits() & QNAN) == QNAN);
+                    let both_plain = (lv.to_bits() & QNAN) != QNAN && (rv.to_bits() & QNAN) != QNAN;
+                    let ne = if both_plain {
+                        lv.to_bits() != rv.to_bits() || (lv.to_bits() & QNAN) == QNAN
+                    } else {
+                        lv.to_bits() != rv.to_bits()
+                    };
+                    fr.registers[*dst] = Value::bool(ne);
                     fr.pc += 1;
                 }
                 Instruction::Lt { dst, lhs, rhs, loc } => {
@@ -928,6 +989,55 @@ pub fn execute_bytecode(
                 }
                 Instruction::Ge { dst, lhs, rhs, loc } => {
                     compare_op!(&mut frames[fi].registers, *dst, *lhs, *rhs, >=, *loc);
+                    frames[fi].pc += 1;
+                }
+
+                //  Unified ForNext iteration — handles lists, objects, and ranges.
+                //  Returns the current element and a "has more" flag.
+                Instruction::ForNext { dst_val, dst_done, iterable, idx_reg, loc: _ } => {
+                    let idx = frames[fi].registers[*idx_reg].as_number().unwrap_or(0.0) as usize;
+                    let iter_val = frames[fi].registers[*iterable];
+                    let mut has_more = false;
+                    let mut value = Value::from_bits(0);
+
+                    if let Some(oid) = iter_val.as_obj_id() {
+                        let objects = ctx.heap.objects.get();
+                        match objects.get(oid as usize).and_then(|o| o.as_ref()).map(|o| &o.obj) {
+                            Some(ManagedObject::List(elems)) => {
+                                if idx < elems.len() {
+                                    value = elems[idx];
+                                    has_more = true;
+                                }
+                            }
+                            Some(ManagedObject::Object(fields)) => {
+                                // Build keys list once — cache the result
+                                // For simplicity, rebuild each time (objects are small)
+                                let keys: Vec<&str> = ctx.string_pool.iter()
+                                    .enumerate()
+                                    .filter(|(i, _)| fields.contains_key(&(*i as u32)))
+                                    .map(|(_, s)| s.as_ref())
+                                    .collect();
+                                if idx < keys.len() {
+                                    let key = keys[idx];
+                                    value = Value::sso(key).unwrap_or_else(||
+                                        Value::pool(ctx.string_pool.iter()
+                                            .position(|s| s.as_ref() == key).unwrap_or(0) as u32));
+                                    has_more = true;
+                                }
+                            }
+                            Some(ManagedObject::Range { start, end, step }) => {
+                                let v = *start + idx as f64 * *step;
+                                if (*step > 0.0 && v < *end) || (*step < 0.0 && v > *end) {
+                                    value = Value::number(v);
+                                    has_more = true;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    frames[fi].registers[*dst_val] = value;
+                    frames[fi].registers[*dst_done] = Value::bool(has_more);
+                    frames[fi].registers[*idx_reg] = Value::number((idx + 1) as f64);
                     frames[fi].pc += 1;
                 }
 
@@ -1074,7 +1184,7 @@ pub fn execute_bytecode(
                     let promise_val = frames[fi].registers[*promise];
                     let val = frames[fi].registers[*value];
                     let continuation = if let Some(oid) = promise_val.as_obj_id() {
-                        let mut objs = ctx.heap.objects.get_mut();
+                        let objs = ctx.heap.objects.get_mut();
                         if let Some(Some(slot)) = objs.get_mut(oid as usize) {
                             match &mut slot.obj {
                                 ManagedObject::Promise(PromiseState::Pending { continuation: c }) => {
@@ -1258,11 +1368,20 @@ pub fn execute_bytecode(
                                             ctx.alloc(ManagedObject::List(out))
                                         }
                                         "includes" => Value::bool(
-                                            if elems.len() > 10000 { elems.par_iter().any(|v| v.to_bits() == read(0).to_bits()) }
-                                            else { elems.iter().any(|v| v.to_bits() == read(0).to_bits()) }),
+                                            {
+                                                #[cfg(feature = "parallel")]
+                                                if elems.len() > 10000 {
+                                                    elems.par_iter().any(|v| v.to_bits() == read(0).to_bits())
+                                                } else {
+                                                    elems.iter().any(|v| v.to_bits() == read(0).to_bits())
+                                                }
+                                                #[cfg(not(feature = "parallel"))]
+                                                elems.iter().any(|v| v.to_bits() == read(0).to_bits())
+                                            }),
                                         "index_of" => Value::number(elems.iter().position(|v| v.to_bits() == read(0).to_bits()).map(|i| i as f64).unwrap_or(-1.0)),
                                         "sorted" => {
                                             let mut e = elems;
+                                            #[cfg(feature = "parallel")]
                                             if e.len() > 10000 {
                                                 e.par_sort_unstable_by(|a, b| {
                                                     match (a.as_number(), b.as_number()) {
@@ -1271,15 +1390,10 @@ pub fn execute_bytecode(
                                                     }
                                                 });
                                             } else {
-                                                for i in 1..e.len() {
-                                                    let mut j = i;
-                                                    while j > 0 {
-                                                        let (a, b) = (e[j-1].as_number(), e[j].as_number());
-                                                        if let (Some(a), Some(b)) = (a, b) { if a <= b { break; } e.swap(j-1, j); } else { break; }
-                                                        j -= 1;
-                                                    }
-                                                }
+                                                sort_insertion(&mut e);
                                             }
+                                            #[cfg(not(feature = "parallel"))]
+                                            sort_insertion(&mut e);
                                             ctx.alloc(ManagedObject::List(e))
                                         }
                                         "reversed" => ctx.alloc(ManagedObject::List(elems.into_iter().rev().collect())),
@@ -1326,6 +1440,239 @@ pub fn execute_bytecode(
                                                 if !out.iter().any(|x: &Value| x.to_bits() == v.to_bits()) { out.push(v); }
                                             }
                                             ctx.alloc(ManagedObject::List(out))
+                                        }
+                                        _ => { frames[fi].pc += 1; continue; }
+                                    };
+                                    if let Some(d) = dst { frames[fi].registers[d] = result; }
+                                    frames[fi].pc += 1;
+                                    continue;
+                                }
+                            }
+
+                            // ────────────────────────────────────────────
+                            //  Generator .next() dispatch
+                            // ────────────────────────────────────────────
+                            if method == "next"
+                                && let Some(gen_oid) = receiver.as_obj_id()
+                            {
+                                let is_gen = {
+                                    let objects = ctx.heap.objects.get();
+                                    objects.get(gen_oid as usize)
+                                        .and_then(|o| o.as_ref())
+                                        .is_some_and(|o| matches!(o.obj, ManagedObject::Promise(_)))
+                                };
+                                if is_gen {
+                                    // Extract and resume the generator's continuation
+                                    let gen_state = {
+                                        let objs = ctx.heap.objects.get_mut();
+                                        if let Some(Some(slot)) = objs.get_mut(gen_oid as usize) {
+                                            match &mut slot.obj {
+                                                ManagedObject::Promise(ps) => {
+                                                    match std::mem::replace(ps, PromiseState::Resolved(Value::from_bits(0))) {
+                                                        PromiseState::Pending { continuation } => {
+                                                            (continuation, false)
+                                                        }
+                                                        PromiseState::Resolved(_v) => (None, true),
+                                                        PromiseState::Rejected(_) => (None, true),
+                                                        PromiseState::Compound { .. } => (None, true),
+                                                    }
+                                                }
+                                                _ => (None, true),
+                                            }
+                                        } else { (None, true) }
+                                    };
+                                    let (cont, done) = gen_state;
+                                    if done {
+                                        // Generator exhausted
+                                        if let Some(d) = dst { frames[fi].registers[d] = Value::from_bits(0); }
+                                        frames[fi].pc += 1;
+                                        continue;
+                                    }
+                                    if let Some(frame) = cont {
+                                        // Resume the generator — it will run until next yield
+                                        let result = execute_bytecode(&frame.instructions, ctx.clone(), frame.registers, frame.pc)?;
+                                        if let Some(d) = dst { frames[fi].registers[d] = result; }
+                                    } else {
+                                        if let Some(d) = dst { frames[fi].registers[d] = Value::from_bits(0); }
+                                    }
+                                    frames[fi].pc += 1;
+                                    continue;
+                                }
+                            }
+
+                            // ────────────────────────────────────────────
+                            //  String method dispatch
+                            // ────────────────────────────────────────────
+                            if let Some(s) = ctx.value_as_string(receiver) {
+                                let args_regs = &*box_data.args_regs;
+                                let read_str = |i: usize| args_regs.get(i).map(|&r| frames[fi].registers[r]).and_then(|v| ctx.value_as_string(v));
+                                let read_num = |i: usize| args_regs.get(i).map(|&r| frames[fi].registers[r]).and_then(|v| v.as_number());
+                                let result = match method {
+                                    "len" => Value::number(s.len() as f64),
+                                    "upper" => {
+                                        let s = s.to_uppercase();
+                                        Value::sso(&s).unwrap_or_else(|| ctx.alloc(ManagedObject::String(Arc::from(s))))
+                                    }
+                                    "lower" => {
+                                        let s = s.to_lowercase();
+                                        Value::sso(&s).unwrap_or_else(|| ctx.alloc(ManagedObject::String(Arc::from(s))))
+                                    }
+                                    "trim" => {
+                                        let s = s.trim().to_string();
+                                        Value::sso(&s).unwrap_or_else(|| ctx.alloc(ManagedObject::String(Arc::from(s))))
+                                    }
+                                    "starts_with" if args_regs.len() >= 1 => {
+                                        Value::bool(read_str(0).map_or(false, |p| s.starts_with(&p)))
+                                    }
+                                    "ends_with" if args_regs.len() >= 1 => {
+                                        Value::bool(read_str(0).map_or(false, |p| s.ends_with(&p)))
+                                    }
+                                    "contains" if args_regs.len() >= 1 => {
+                                        Value::bool(read_str(0).map_or(false, |p| s.contains(&p)))
+                                    }
+                                    "replace" if args_regs.len() >= 2 => {
+                                        let from = read_str(0).unwrap_or_default();
+                                        let to = read_str(1).unwrap_or_default();
+                                        let s = s.replace(&from, &to);
+                                        Value::sso(&s).unwrap_or_else(|| ctx.alloc(ManagedObject::String(Arc::from(s))))
+                                    }
+                                    "split" if args_regs.len() >= 1 => {
+                                        let delim = read_str(0).unwrap_or_default();
+                                        let parts: Vec<Value> = if delim.is_empty() {
+                                            s.chars().map(|c| {
+                                                let cs = c.to_string();
+                                                Value::sso(&cs).unwrap_or_else(|| ctx.alloc(ManagedObject::String(Arc::from(cs))))
+                                            }).collect()
+                                        } else {
+                                            s.split(&delim).map(|part| {
+                                                Value::sso(part).unwrap_or_else(|| ctx.alloc(ManagedObject::String(Arc::from(part.to_string()))))
+                                            }).collect()
+                                        };
+                                        ctx.alloc(ManagedObject::List(parts))
+                                    }
+                                    "repeat" if args_regs.len() >= 1 => {
+                                        let n = read_num(0).unwrap_or(0.0) as usize;
+                                        let s = s.repeat(n);
+                                        Value::sso(&s).unwrap_or_else(|| ctx.alloc(ManagedObject::String(Arc::from(s))))
+                                    }
+                                    "slice" => {
+                                        let start = read_num(0).unwrap_or(0.0) as usize;
+                                        let end = read_num(1).map(|n| n as usize).unwrap_or(s.len());
+                                        let (start, end) = (start.min(s.len()), end.min(s.len()));
+                                        let sub = &s[start..end];
+                                        Value::sso(sub).unwrap_or_else(|| ctx.alloc(ManagedObject::String(Arc::from(sub.to_string()))))
+                                    }
+                                    "index_of" if args_regs.len() >= 1 => {
+                                        Value::number(read_str(0).map_or(-1.0, |p| s.find(&p).map(|i| i as f64).unwrap_or(-1.0)))
+                                    }
+                                    "to_number" => {
+                                        Value::number(s.parse::<f64>().unwrap_or(0.0))
+                                    }
+                                    "is_empty" => Value::bool(s.is_empty()),
+                                    "chars" => {
+                                        let chars: Vec<Value> = s.chars().map(|c| {
+                                            let cs = c.to_string();
+                                            Value::sso(&cs).unwrap_or_else(|| ctx.alloc(ManagedObject::String(Arc::from(cs))))
+                                        }).collect();
+                                        ctx.alloc(ManagedObject::List(chars))
+                                    }
+                                    _ => { frames[fi].pc += 1; continue; }
+                                };
+                                if let Some(d) = dst { frames[fi].registers[d] = result; }
+                                frames[fi].pc += 1;
+                                continue;
+                            }
+
+                            // ────────────────────────────────────────────
+                            //  Number method dispatch
+                            // ────────────────────────────────────────────
+                            if let Some(n) = receiver.as_number() {
+                                let args_regs = &*box_data.args_regs;
+                                let read_num = |i: usize| args_regs.get(i).map(|&r| frames[fi].registers[r]).and_then(|v| v.as_number());
+                                let result = match method {
+                                    "to_string" => {
+                                        let s = stringify_value(&ctx, receiver);
+                                        Value::sso(&s).unwrap_or_else(|| ctx.alloc(ManagedObject::String(Arc::from(s))))
+                                    }
+                                    "ceil" => Value::number(n.ceil()),
+                                    "floor" => Value::number(n.floor()),
+                                    "round" => Value::number(n.round()),
+                                    "abs" => Value::number(n.abs()),
+                                    "sqrt" => Value::number(n.sqrt()),
+                                    "pow" if args_regs.len() >= 1 => {
+                                        Value::number(n.powf(read_num(0).unwrap_or(0.0)))
+                                    }
+                                    "is_integer" => Value::bool(n.fract() == 0.0),
+                                    "to_int" => Value::number(n.trunc() as i64 as f64),
+                                    _ => { frames[fi].pc += 1; continue; }
+                                };
+                                if let Some(d) = dst { frames[fi].registers[d] = result; }
+                                frames[fi].pc += 1;
+                                continue;
+                            }
+
+                            // ────────────────────────────────────────────
+                            //  Object method dispatch
+                            // ────────────────────────────────────────────
+                            if let Some(obj_oid) = receiver.as_obj_id() {
+                                let is_object = {
+                                    let objects = ctx.heap.objects.get();
+                                    objects.get(obj_oid as usize)
+                                        .and_then(|o| o.as_ref())
+                                        .is_some_and(|o| matches!(o.obj, ManagedObject::Object(_)))
+                                };
+                                if is_object {
+                                    let args_regs = &*box_data.args_regs;
+                                    let read_str = |i: usize| args_regs.get(i).map(|&r| frames[fi].registers[r]).and_then(|v| ctx.value_as_string(v));
+                                    let result = match method {
+                                        "keys" | "values" | "entries" => {
+                                            let (keys, vals): (Vec<_>, Vec<_>) = {
+                                                let objects = ctx.heap.objects.get();
+                                                if let Some(Some(obj)) = objects.get(obj_oid as usize) {
+                                                    if let ManagedObject::Object(ref fields) = obj.obj {
+                                                        let mut ks: Vec<Value> = Vec::with_capacity(fields.len());
+                                                        let mut vs: Vec<Value> = Vec::with_capacity(fields.len());
+                                                        for (&name_id, v) in fields.iter() {
+                                                            let name = ctx.string_pool.get(name_id as usize).map(|s| s.as_ref()).unwrap_or("?");
+                                                            ks.push(Value::sso(name).unwrap_or_else(|| Value::pool(name_id)));
+                                                            vs.push(*v);
+                                                        }
+                                                        (ks, vs)
+                                                    } else { (Vec::new(), Vec::new()) }
+                                                } else { (Vec::new(), Vec::new()) }
+                                            };
+                                            match method {
+                                                "keys" => ctx.alloc(ManagedObject::List(keys)),
+                                                "values" => ctx.alloc(ManagedObject::List(vals)),
+                                                _ => { // entries
+                                                    let entries: Vec<Value> = keys.into_iter().zip(vals.into_iter()).map(|(k, v)| {
+                                                        ctx.alloc(ManagedObject::List(vec![k, v]))
+                                                    }).collect();
+                                                    ctx.alloc(ManagedObject::List(entries))
+                                                }
+                                            }
+                                        }
+                                        "has" if args_regs.len() >= 1 => {
+                                            let key = read_str(0).unwrap_or_default();
+                                            let found = {
+                                                let objects = ctx.heap.objects.get();
+                                                if let Some(Some(obj)) = objects.get(obj_oid as usize) {
+                                                    if let ManagedObject::Object(ref fields) = obj.obj {
+                                                        ctx.string_pool.iter().position(|s| s.as_ref() == key)
+                                                            .map_or(false, |id| fields.contains_key(&(id as u32)))
+                                                    } else { false }
+                                                } else { false }
+                                            };
+                                            Value::bool(found)
+                                        }
+                                        "len" => {
+                                            let l = {
+                                                let objects = ctx.heap.objects.get();
+                                                if let Some(Some(obj)) = objects.get(obj_oid as usize) {
+                                                    if let ManagedObject::Object(ref fields) = obj.obj { fields.len() as f64 } else { 0.0 }
+                                                } else { 0.0 }
+                                            };
+                                            Value::number(l)
                                         }
                                         _ => { frames[fi].pc += 1; continue; }
                                     };

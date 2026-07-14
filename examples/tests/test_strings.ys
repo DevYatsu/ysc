@@ -1,0 +1,76 @@
+// String method tests
+
+// .len()
+print("len:")
+print("hello".len())           // 5
+print("".len())                // 0
+
+// .upper() / .lower()
+print("case:")
+print("Hello".upper())         // HELLO
+print("Hello".lower())         // hello
+
+// .trim()
+print("trim:")
+print("  hi  ".trim())         // hi
+print("no trim".trim())        // no trim
+
+// .starts_with() / .ends_with()
+print("starts/ends:")
+print("hello world".starts_with("hello"))  // true
+print("hello world".starts_with("world"))  // false
+print("hello world".ends_with("world"))    // true
+print("hello world".ends_with("hello"))    // false
+
+// .contains()
+print("contains:")
+print("hello world".contains("lo wo"))    // true
+print("hello world".contains("xyz"))      // false
+
+// .replace()
+print("replace:")
+print("a-b-c".replace("-", ":"))          // a:b:c
+print("hello".replace("l", "L"))          // heLLo
+
+// .split()
+print("split:")
+let parts = "a,b,c".split(",")
+print(len(parts))                         // 3
+print(parts[0])                           // a
+print(parts[1])                           // b
+print(parts[2])                           // c
+
+// .repeat()
+print("repeat:")
+print("ab".repeat(3))                     // ababab
+print("x".repeat(0))                      // (empty)
+print("x".repeat(1))                      // x
+
+// .slice()
+print("slice:")
+print("hello".slice(1, 4))               // ell
+print("hello".slice(0, 3))               // hel
+print("hello".slice(2, 10))              // llo
+
+// .index_of()
+print("index_of:")
+print("hello".index_of("l"))             // 2
+print("hello".index_of("x"))             // -1
+
+// .to_number()
+print("to_number:")
+print("42".to_number())                   // 42
+print("3.14".to_number())                 // 3.14
+print("notanumber".to_number())           // 0
+
+// .is_empty()
+print("is_empty:")
+print("".is_empty())                      // true
+print("x".is_empty())                     // false
+
+// .chars()
+print("chars:")
+let cs = "ab".chars()
+print(len(cs))                            // 2
+print(cs[0])                              // a
+print(cs[1])                              // b

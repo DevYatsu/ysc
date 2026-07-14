@@ -6,6 +6,7 @@
 pub mod collections;
 pub mod io;
 pub mod list_ops;
+#[cfg(feature = "networking")]
 pub mod net;
 pub mod time;
 
@@ -18,5 +19,6 @@ pub fn register(fns: &mut FxHashMap<String, NativeFn>) {
     collections::register(fns);
     list_ops::register(fns);
     time::register(fns);
+    #[cfg(feature = "networking")]
     net::register(fns);
 }

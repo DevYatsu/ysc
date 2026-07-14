@@ -25,16 +25,6 @@ fn resolved_promise(ctx: &Context, val: Value) -> Value {
     ctx.alloc(ManagedObject::Promise(PromiseState::Resolved(val)))
 }
 
-/// Wrap a failure name-id in a rejected Promise on the heap.
-fn rejected_promise(ctx: &Context, name_id: u32) -> Value {
-    ctx.alloc(ManagedObject::Promise(PromiseState::Rejected(name_id)))
-}
-
-/// Look up a string-pool index for a failure name.
-fn lookup_failure_id(ctx: &Context, name: &str) -> u32 {
-    ctx.string_pool.iter().position(|s| s.as_ref() == name).unwrap_or(0) as u32
-}
-
 fn native_fetch(ctx: &Arc<Context>, args: &[Value]) -> Result<Value, JitError> {
     let url = args.first()
         .and_then(|v| ctx.value_as_string(*v))
