@@ -71,6 +71,7 @@ impl LexingError {
 #[logos(error(LexingError, LexingError::from_lexer))]
 #[logos(skip r"[ \t\f]+")]
 #[logos(skip r"/\*(?:[^*]|\*[^/])*\*/")]
+#[logos(skip(r"#[^\n]*", allow_greedy = true))]
 pub enum Token<'source> {
     // -- Keywords -----------------------------------------------------------
 
@@ -128,9 +129,9 @@ pub enum Token<'source> {
     /// 'or' boolean OR operator.
     #[token("or")]
     Or,
-    /// 'return' keyword.
-    #[token("return")]
-    Return,
+    /// 'ret' keyword (returns a value from a function or closure).
+    #[token("ret")]
+    Ret,
     /// 'super' parent module path.
     #[token("super")]
     Super,
@@ -296,11 +297,11 @@ mod tests {
 
     #[test]
     fn test_lexer_keywords() {
-        let input = "fun return continue if else for while in use super exp move and or";
+        let input = "fun ret continue if else for while in use super exp move and or";
         let mut lexer = Token::lexer(input);
 
         assert_eq!(lexer.next(), Some(Ok(Token::Fun)));
-        assert_eq!(lexer.next(), Some(Ok(Token::Return)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Ret)));
         assert_eq!(lexer.next(), Some(Ok(Token::Continue)));
         assert_eq!(lexer.next(), Some(Ok(Token::If)));
         assert_eq!(lexer.next(), Some(Ok(Token::Else)));

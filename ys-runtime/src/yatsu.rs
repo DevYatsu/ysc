@@ -216,7 +216,12 @@ impl Yatsu {
         // Register user-defined functions from the compiled program
         for func in program.functions.iter() {
             if let Some(name) = program.string_pool.get(func.name_id as usize) {
-                self.ctx.callables.get_mut().insert(func.name_id, Callable::User(func.clone()));
+                let mut callables = self.ctx.callables.get_mut();
+                let idx = func.name_id as usize;
+                if idx >= callables.len() {
+                    callables.resize(idx + 1, None);
+                }
+                callables[idx] = Some(Callable::User(func.clone()));
                 self.ctx.callables_by_name.get_mut().insert(name.to_string(), Callable::User(func.clone()));
             }
         }
@@ -299,9 +304,13 @@ impl Yatsu {
         });
         let callable = Callable::Native(Arc::clone(&nf));
         self.ctx.callables_by_name.get_mut().insert(name.to_string(), callable);
-        // Also try to insert into name_id map if the name is in the string pool
+        // Also try to insert into callables Vec if the name is in the string pool
         if let Some(pos) = self.ctx.string_pool.iter().position(|s| s.as_ref() == name) {
-            self.ctx.callables.get_mut().insert(pos as u32, Callable::Native(nf));
+            let mut callables = self.ctx.callables.get_mut();
+            if pos >= callables.len() {
+                callables.resize(pos + 1, None);
+            }
+            callables[pos] = Some(Callable::Native(nf));
         }
         self.function_names.push(name.to_string());
     }

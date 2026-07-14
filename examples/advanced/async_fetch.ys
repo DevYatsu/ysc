@@ -1,13 +1,14 @@
-// Async-style HTTP fetch
-// fetch() is blocking but async syntax demonstrates the pattern
-async fun fetch_url(url) {
-    print("Fetching: " + url)
-    let data = fetch(url)
-    print("Done fetching: " + url)
-    return data
-}
+// Sequential HTTP fetches — each request waits for the previous one.
+// `await fetch(url)` pauses until the response arrives.
 
-print("Sequential fetches:")
-let a = await fetch_url("https://example.com")
-let b = await fetch_url("https://httpbin.org/get")
-print("All requests completed")
+print("=== Sequential fetches ===")
+let t1 = time()
+
+let a = await fetch("https://example.com")
+print("Got response 1: " + str(len(a)) + " bytes")
+
+let b = await fetch("https://example.com")
+print("Got response 2: " + str(len(b)) + " bytes")
+
+let t2 = time()
+print("Total: " + str(t2 - t1) + " seconds")

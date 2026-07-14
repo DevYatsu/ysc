@@ -125,7 +125,8 @@ impl Value {
     /// access.  Returns `None` if this value is not an SSO string.
     pub fn as_sso_str(self) -> Option<[u8; 6]> {
         let tag = (self.0 & TAG_MASK) >> 48;
-        if (3..=9).contains(&tag) {
+        // Must have the QNAN bit set — numbers can have matching tag bits.
+        if (3..=9).contains(&tag) && (self.0 & QNAN) == QNAN {
             let len = (tag - 3) as usize;
             let mut bytes = [0u8; 6];
             for (i, byte) in bytes.iter_mut().enumerate().take(len) {
@@ -240,10 +241,17 @@ pub enum Instruction {
 
     //  Closures
     /// Create a closure that captures current register values.
-    /// Create a closure that captures current register values.
     /// The closure calls a function by its interned name_id through the
     /// unified callables map — the same path as any named function call.
     MakeClosure { dst: usize, name_id: u32, captures: Arc<[usize]> },
+
+    //  Async
+    /// Wrap a value in a resolved Promise.
+    MakePromise { dst: usize, src: usize },
+    /// Create a pending Promise (no continuation) — used as async function return value.
+    MakePendingPromise { dst: usize },
+    /// Resolve a pending Promise with the given value.
+    ResolvePromise { promise: usize, value: usize },
 
     //  Calls
     /// Call a statically-known function by its string-pool name ID.

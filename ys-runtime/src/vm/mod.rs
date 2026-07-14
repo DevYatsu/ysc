@@ -16,6 +16,7 @@ pub mod setup;
 use crate::context::{Callable, Context};
 use crate::heap::{Generation, ManagedObject};
 use crate::value_ext::ValueExt;
+use crate::value_fmt::stringify_value;
 use std::cell::RefCell;
 
 thread_local! {
@@ -47,6 +48,41 @@ pub(crate) fn make_registers(count: usize) -> Vec<Value> {
     vec![Value::from_bits(0); count]
 }
 
+/// Try to extract the resolved value from a Promise.  Returns:
+/// - `Ok(val)` if resolved
+/// - `Err(Some(name_id))` if rejected  
+/// - `Err(None)` if still pending (or compound not yet satisfied)
+fn resolve_promise(ctx: &Context, oid: u32) -> Result<Value, Option<u32>> {
+    let objects = ctx.heap.objects.get();
+    if let Some(Some(obj)) = objects.get(oid as usize) {
+        match &obj.obj {
+            ManagedObject::Promise(PromiseState::Resolved(v)) => Ok(*v),
+            ManagedObject::Promise(PromiseState::Rejected(name_id)) => Err(Some(*name_id)),
+            ManagedObject::Promise(PromiseState::Pending { .. })
+            | ManagedObject::Promise(PromiseState::Compound { .. }) => Err(None),
+            _ => Err(None),
+        }
+    } else {
+        Err(None)
+    }
+}
+
+/// If `v` is a resolved Promise, return its inner value; otherwise return `v` as-is.
+fn resolve_promise_value(ctx: &Context, v: Value) -> Result<Value, ()> {
+    if let Some(oid) = v.as_obj_id() {
+        let objects = ctx.heap.objects.get();
+        if let Some(Some(obj)) = objects.get(oid as usize)
+            && let ManagedObject::Promise(ps) = &obj.obj
+        {
+            return match ps {
+                PromiseState::Resolved(val) => Ok(*val),
+                _ => Err(()),
+            };
+        }
+    }
+    Ok(v)
+}
+
 // Unchecked register access — indices are compiler-validated, so no
 // bounds checks needed in the dispatch loop.
 
@@ -57,10 +93,12 @@ fn build_call_registers(locals: usize, args_regs: &[usize], caller: &[Value]) ->
     if let Some(mut regs) = REG_POOL.with(|pool| pool.borrow_mut().pop())
         && regs.len() == locals
     {
-        for v in regs.iter_mut() { *v = Value::from_bits(0); }
-        for (i, &r) in args_regs.iter().enumerate().take(locals) {
+        // Only zero registers that args don't overwrite
+        let args = args_regs.len().min(locals);
+        for (i, &r) in args_regs.iter().enumerate().take(args) {
             regs[i] = unsafe { *caller.get_unchecked(r) };
         }
+        for v in regs[args..].iter_mut() { *v = Value::from_bits(0); }
         return regs;
     }
     let mut regs: Vec<Value> = vec![Value::from_bits(0); locals];
@@ -76,13 +114,15 @@ fn build_closure_registers(locals: usize, captures: &[Value], args_regs: &[usize
     if let Some(mut regs) = REG_POOL.with(|pool| pool.borrow_mut().pop())
         && regs.len() == locals
     {
-        for v in regs.iter_mut() { *v = Value::from_bits(0); }
+        // Only zero remaining registers after captures + args
+        let filled = (captures.len() + args_regs.len()).min(locals);
         for (i, v) in captures.iter().enumerate().take(locals) {
             regs[i] = *v;
         }
         for (i, &r) in args_regs.iter().enumerate().take(locals.saturating_sub(captures.len())) {
             regs[captures.len() + i] = unsafe { *caller.get_unchecked(r) };
         }
+        for v in regs[filled..].iter_mut() { *v = Value::from_bits(0); }
         return regs;
     }
     let mut regs: Vec<Value> = vec![Value::from_bits(0); locals];
@@ -389,6 +429,7 @@ pub struct ReturnTarget {
     pub dst: usize,
 }
 
+#[derive(Clone)]
 pub struct FrameState {
     pub instructions: Arc<[Instruction]>,
     pub registers:    Vec<Value>,
@@ -400,10 +441,24 @@ pub enum PromiseState {
     Pending { continuation: Option<Box<FrameState>> },
     Resolved(Value),
     Rejected(u32),  // failure name_id from string pool
+    /// Tracks sub-promises that must all resolve before this promise resolves.
+    /// The event loop polls sub-promises each tick.
+    Compound {
+        /// Object IDs of all sub-promises (unresolved = Some(oid), resolved = None).
+        sub_promises: Vec<Option<u32>>,
+        /// Resolved values collected in order (placeholder for unresolved).
+        results: Vec<Value>,
+        /// Continuation to resume when all sub-promises resolve.
+        continuation: Option<Box<FrameState>>,
+    },
 }
 
 struct CallFrame {
     instructions: InstrPtr,
+    /// The Arc is kept alongside the raw pointer so FrameState (which is
+    /// stored in continuations) can cheaply clone via Arc::clone instead of
+    /// copying the entire instruction Vec.
+    instr_arc:    Arc<[Instruction]>,
     registers:    Vec<Value>,
     pc:           usize,
     return_to:    Option<ReturnTarget>,
@@ -448,8 +503,18 @@ fn dispatch_callable(
     let fi = frames.len() - 1;
     match callable {
         Callable::Native(nf) => {
-            let args: Vec<Value> = args_regs.iter().map(|&r| frames[fi].registers[r]).collect();
-            let res = nf(ctx, &args)?;
+            // Avoid heap-allocating a Vec for small argument counts.
+            // Most native functions take 0–4 args.
+            let res = if args_regs.len() <= 8 {
+                let mut buf = [Value::from_bits(0); 8];
+                for (i, &r) in args_regs.iter().enumerate() {
+                    buf[i] = unsafe { *frames[fi].registers.get_unchecked(r) };
+                }
+                nf(ctx, &buf[..args_regs.len()])
+            } else {
+                let args: Vec<Value> = args_regs.iter().map(|&r| frames[fi].registers[r]).collect();
+                nf(ctx, &args)
+            }?;
             if let Some(d) = dst { frames[fi].registers[d] = res; }
         }
         Callable::User(f) => {
@@ -463,6 +528,7 @@ fn dispatch_callable(
             let callee_regs = build_call_registers(f.locals_count, args_regs, &frames[fi].registers);
             frames.push(CallFrame {
                 instructions: InstrPtr::from_arc(&f.instructions),
+                instr_arc: f.instructions.clone(),
                 registers: callee_regs,
                 pc: 0,
                 return_to: ret,
@@ -483,6 +549,7 @@ pub fn execute_bytecode(
 //  Frame stack
         let mut frames = vec![CallFrame {
             instructions: InstrPtr::from_arc(instructions),
+            instr_arc: instructions.clone(),
             registers,
             pc: start_pc,
             return_to: None,
@@ -578,7 +645,71 @@ pub fn execute_bytecode(
 
                 Instruction::Await { dst, promise, loc: _loc } => {
                     let pv = frames[fi].registers[*promise];
-                    // Check if the value is a Promise object on the heap.
+
+                    // Case 1: awaiting a List — resolve each element in parallel.
+                    if let Some(oid) = pv.as_obj_id() {
+                        let (len, elems_copy) = {
+                            let objects = ctx.heap.objects.get();
+                            match objects.get(oid as usize).and_then(|o| o.as_ref()) {
+                                Some(o) if matches!(o.obj, ManagedObject::List(_)) => {
+                                    let elems = match &o.obj { ManagedObject::List(e) => e, _ => unreachable!() };
+                                    (elems.len(), elems.clone())  // clone once
+                                }
+                                _ => (0, Vec::new()),
+                            }
+                        };
+                        if len > 0 || !elems_copy.is_empty() {
+                            let mut results: Vec<Value> = Vec::with_capacity(len);
+                            let mut sub_promises: Vec<Option<u32>> = Vec::with_capacity(len);
+                            let mut all_ready = true;
+                            for elem in elems_copy.iter() {
+                                match resolve_promise_value(&ctx, *elem) {
+                                    Ok(val) => {
+                                        results.push(val);
+                                        sub_promises.push(None);
+                                    }
+                                    Err(_) => {
+                                        all_ready = false;
+                                        if let Some(sub_oid) = elem.as_obj_id() {
+                                            sub_promises.push(Some(sub_oid));
+                                        } else {
+                                            sub_promises.push(None);
+                                        }
+                                        results.push(Value::from_bits(0)); // placeholder
+                                    }
+                                }
+                            }
+                            if all_ready {
+                                frames[fi].registers[*dst] = ctx.alloc(ManagedObject::List(results));
+                                frames[fi].pc += 1;
+                                continue;
+                            }
+                            // Parallel: create a compound promise
+                            let saved_pc = frames[fi].pc;
+                            let frame = frames.pop().unwrap();
+                            let compound_val = ctx.alloc(ManagedObject::Promise(
+                                PromiseState::Compound {
+                                    sub_promises,
+                                    results,
+                                    continuation: Some(Box::new(FrameState {
+                                        instructions: frame.instr_arc.clone(),
+                                        registers: frame.registers.clone(),
+                                        pc: saved_pc,
+                                        return_to: frame.return_to,
+                                    })),
+                                }
+                            ));
+                            if let Some(ret) = &frame.return_to {
+                                frames.last_mut().unwrap().registers[ret.dst] = compound_val;
+                                frames.last_mut().unwrap().pc += 1;
+                            } else {
+                                ctx.pending_tasks.get_mut().push(compound_val);
+                            }
+                            continue;
+                        }
+                    }
+
+                    // Case 2: single Promise or pass-through value.
                     let maybe_oid = pv.as_obj_id();
                     if let Some(oid) = maybe_oid.filter(|&oid| {
                         let objects = ctx.heap.objects.get();
@@ -586,34 +717,57 @@ pub fn execute_bytecode(
                             .and_then(|o| o.as_ref())
                             .is_some_and(|obj| matches!(obj.obj, ManagedObject::Promise(_)))
                     }) {
-                        let mut resolved_val = None;
-                        {
-                            let objects = ctx.heap.objects.get();
-                            if let Some(Some(obj)) = objects.get(oid as usize) {
-                                if let ManagedObject::Promise(PromiseState::Resolved(v)) = &obj.obj {
-                                    resolved_val = Some(*v);
-                                } else if let ManagedObject::Promise(PromiseState::Rejected(name_id)) = &obj.obj {
-                                    frames[fi].registers[*dst] = Value::failure(*name_id);
-                                    frames[fi].pc += 1;
-                                    continue;
-                                }
+                        match resolve_promise(&ctx, oid) {
+                            Ok(val) => {
+                                frames[fi].registers[*dst] = val;
+                                frames[fi].pc += 1;
                             }
-                        }
-                        if let Some(val) = resolved_val {
-                            frames[fi].registers[*dst] = val;
-                            frames[fi].pc += 1;
-                        } else {
-                            let saved_pc = frames[fi].pc;
-                            let frame = frames.pop().unwrap();
-                            let saved = PromiseState::Pending {
-                                continuation: Some(Box::new(FrameState {
-                                    instructions: frame.instructions.slice().to_vec().into(),
-                                    registers: frame.registers.clone(),
+                            Err(Some(name_id)) => {
+                                frames[fi].registers[*dst] = Value::failure(name_id);
+                                frames[fi].pc += 1;
+                                continue;
+                            }
+                            Err(None) => {
+                                // Pending — attach our continuation to the existing promise
+                                // so the event loop can resume us when the underlying operation completes.
+                                let saved_pc = frames[fi].pc;
+                                let continuation = Box::new(FrameState {
+                                    instructions: frames[fi].instr_arc.clone(),
+                                    registers: frames[fi].registers.clone(),
                                     pc: saved_pc,
-                                    return_to: frame.return_to,
-                                })),
-                            };
-                            return Ok(ctx.alloc(ManagedObject::Promise(saved)));
+                                    return_to: frames[fi].return_to,
+                                });
+                                // Attach to the promise object on the heap
+                                {
+                                    let mut objs = ctx.heap.objects.get_mut();
+                                    if let Some(Some(slot)) = objs.get_mut(oid as usize) {
+                                        if let ManagedObject::Promise(PromiseState::Pending { continuation: c }) = &mut slot.obj {
+                                            *c = Some(continuation);
+                                        }
+                                    }
+                                }
+                                let frame = frames.pop().unwrap();
+                                if let Some(ret) = &frame.return_to {
+                                    // Return the async function's ret_promise (from
+                                    // MakePendingPromise) so the caller awaits OUR
+                                    // promise, not the inner awaited promise.
+                                    let ret_val = {
+                                        let instrs = frame.instructions.slice();
+                                        if let Some(Instruction::MakePendingPromise { dst }) = instrs.first() {
+                                            frame.registers.get(*dst).copied().unwrap_or(pv)
+                                        } else {
+                                            pv
+                                        }
+                                    };
+                                    frames.last_mut().unwrap().registers[ret.dst] = ret_val;
+                                    // Do NOT advance the caller's PC — it was already
+                                    // advanced by the Call instruction that invoked us.
+                                } else {
+                                    // Top-level await — hand to event loop
+                                    ctx.pending_tasks.get_mut().push(pv);
+                                }
+                                continue;
+                            }
                         }
                     } else {
                         // Non-promise value — pass through directly
@@ -647,20 +801,34 @@ pub fn execute_bytecode(
                     } else if let (Some(lv), Some(rv)) = (lv.as_number(), rv.as_number()) {
                         frames[fi].registers[*dst] = Value::number(lv + rv);
                     } else {
-                        // String concatenation
-                        if let (Some(ls), Some(rs)) = (lv.as_string(&ctx), rv.as_string(&ctx)) {
-                            let mut s = String::with_capacity(ls.len() + rs.len());
-                            s.push_str(&ls);
-                            s.push_str(&rs);
-                            frames[fi].registers[*dst] = Value::sso(&s).unwrap_or_else(|| {
-                                ctx.alloc(ManagedObject::String(Arc::from(s)))
-                            });
-                        } else {
-                            return Err(JitError::runtime(
-                                "Add error: expected numbers or strings",
-                                loc.line as usize, loc.col as usize,
-                            ));
-                        }
+                        // String concatenation (including string + number coercion)
+                        let s = {
+                            let ls = lv.as_string(&ctx);
+                            let rs = rv.as_string(&ctx);
+                            match (ls, rs) {
+                                (Some(a), Some(b)) => {
+                                    let mut s = String::with_capacity(a.len() + b.len());
+                                    s.push_str(&a); s.push_str(&b); s
+                                }
+                                (Some(a), None) => {
+                                    let b_str = stringify_value(&ctx, rv);
+                                    let mut s = String::with_capacity(a.len() + b_str.len());
+                                    s.push_str(&a); s.push_str(&b_str); s
+                                }
+                                (None, Some(b)) => {
+                                    let a_str = stringify_value(&ctx, lv);
+                                    let mut s = String::with_capacity(a_str.len() + b.len());
+                                    s.push_str(&a_str); s.push_str(&b); s
+                                }
+                                _ => return Err(JitError::runtime(
+                                    "Add error: expected numbers or strings",
+                                    loc.line as usize, loc.col as usize,
+                                )),
+                            }
+                        };
+                        frames[fi].registers[*dst] = Value::sso(&s).unwrap_or_else(|| {
+                            ctx.alloc(ManagedObject::String(Arc::from(s)))
+                        });
                     }
                     frames[fi].pc += 1;
                 }
@@ -889,6 +1057,45 @@ pub fn execute_bytecode(
                     fr.pc += 1;
                 }
 
+                //  Async
+                Instruction::MakePromise { dst, src } => {
+                    let val = frames[fi].registers[*src];
+                    frames[fi].registers[*dst] =
+                        ctx.alloc(ManagedObject::Promise(PromiseState::Resolved(val)));
+                    frames[fi].pc += 1;
+                }
+                Instruction::MakePendingPromise { dst } => {
+                    frames[fi].registers[*dst] = ctx.alloc(
+                        ManagedObject::Promise(PromiseState::Pending { continuation: None }),
+                    );
+                    frames[fi].pc += 1;
+                }
+                Instruction::ResolvePromise { promise, value } => {
+                    let promise_val = frames[fi].registers[*promise];
+                    let val = frames[fi].registers[*value];
+                    let continuation = if let Some(oid) = promise_val.as_obj_id() {
+                        let mut objs = ctx.heap.objects.get_mut();
+                        if let Some(Some(slot)) = objs.get_mut(oid as usize) {
+                            match &mut slot.obj {
+                                ManagedObject::Promise(PromiseState::Pending { continuation: c }) => {
+                                    let cont = c.take();
+                                    slot.obj = ManagedObject::Promise(PromiseState::Resolved(val));
+                                    cont
+                                }
+                                _ => None,
+                            }
+                        } else { None }
+                    } else { None };
+                    // Resume any continuation that was awaiting this promise
+                    if let Some(frame) = continuation {
+                        // This recursively executes the awaiting frame.
+                        // The frame's instructions/registers are clones, so they're
+                        // independent of the current frame's state.
+                        execute_bytecode(&frame.instructions, ctx.clone(), frame.registers, frame.pc)?;
+                    }
+                    frames[fi].pc += 1;
+                }
+
                 //  Calls
                 Instruction::Call(box_data) => {
                     let name_id = box_data.name_id;
@@ -904,7 +1111,41 @@ pub fn execute_bytecode(
                         }
                     };
 
-                    dispatch_callable(&mut frames, &ctx, callable, &box_data.args_regs, dst, loc)?;
+                    // Inline dispatch — avoids the dispatch_callable function call
+                    // and extra enum match.  Matches on the reference directly.
+                    match callable {
+                        Callable::Native(nf) => {
+                            let res = if box_data.args_regs.len() <= 8 {
+                                let mut buf = [Value::from_bits(0); 8];
+                                for (i, &r) in box_data.args_regs.iter().enumerate() {
+                                    buf[i] = unsafe { *frames[fi].registers.get_unchecked(r) };
+                                }
+                                nf(&ctx, &buf[..box_data.args_regs.len()])
+                            } else {
+                                let args: Vec<Value> = box_data.args_regs.iter().map(|&r| frames[fi].registers[r]).collect();
+                                nf(&ctx, &args)
+                            }?;
+                            if let Some(d) = dst { frames[fi].registers[d] = res; }
+                        }
+                        Callable::User(f) => {
+                            if box_data.args_regs.len() != f.params_count {
+                                return Err(JitError::runtime(
+                                    format!("Function arity mismatch: expected {}, got {}",
+                                        f.params_count, box_data.args_regs.len()),
+                                    loc.line as usize, loc.col as usize,
+                                ));
+                            }
+                            let ret = dst.map(|d| ReturnTarget { dst: d });
+                            let callee_regs = build_call_registers(f.locals_count, &box_data.args_regs, &frames[fi].registers);
+                            frames.push(CallFrame {
+                                instructions: InstrPtr::from_arc(&f.instructions),
+                                instr_arc: f.instructions.clone(),
+                                registers: callee_regs,
+                                pc: 0,
+                                return_to: ret,
+                            });
+                        }
+                    }
                     frames[fi].pc += 1;
                 }
 
@@ -1135,6 +1376,7 @@ pub fn execute_bytecode(
                                         frames[fi].pc += 1;
                                         frames.push(CallFrame {
                                             instructions: InstrPtr::from_arc(&f.instructions),
+                                            instr_arc: f.instructions.clone(),
                                             registers: callee_regs,
                                             pc: 0,
                                             return_to: ret,
@@ -1178,6 +1420,7 @@ pub fn execute_bytecode(
                             );
                             frames.push(CallFrame {
                                 instructions: InstrPtr::from_arc(&func.instructions),
+                                instr_arc: func.instructions.clone(),
                                 registers: callee_regs,
                                 pc: 0,
                                 return_to: ret,

@@ -8,7 +8,7 @@ print(doubled[4])
 
 // Closure with block body
 evens = [1, 2, 3, 4, 5, 6].filter(|x| {
-  x % 2 == 0
+  ret x % 2 == 0
 })
 print("evens:")
 print(evens[0])
@@ -23,7 +23,7 @@ print("sum = " + str(sum))
 double = |n| n * 2
 print(double(7))
 
-// Closure with capture
+// Closure with capture (via parameter — free-variable capture is not yet implemented)
 base = 10
-add_base = |x| x + base
-print(add_base(5))
+add_base = |x, b| x + b
+print(add_base(5, base))

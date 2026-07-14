@@ -20,11 +20,14 @@ pub trait ValueExt {
 
 impl ValueExt for Value {
     fn with_str<R>(&self, ctx: &Context, f: impl FnOnce(&str) -> R) -> Option<R> {
-        use ys_core::compiler::{TAG_MASK, TAG_POOL};
+        use ys_core::compiler::{QNAN, TAG_MASK, TAG_POOL};
         let bits = self.to_bits();
         let tag  = (bits & TAG_MASK) >> 48;
 
-        if (3..=9).contains(&tag) {
+        // SSO strings require the QNAN bit to be set (NaN-boxing).  Normal
+        // numbers can have tag bits 3-9 purely from their exponent/mantissa
+        // — we must check QNAN to avoid misinterpreting them as SSO strings.
+        if (3..=9).contains(&tag) && (bits & QNAN) == QNAN {
             // SSO inline string — decode without heap access.
             let len = (tag - 3) as usize;
             let mut bytes = [0u8; 6];

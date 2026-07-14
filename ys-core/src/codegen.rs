@@ -48,6 +48,10 @@ pub struct Codegen {
     current_error_kind: Option<String>,
     /// All fail full-paths seen in the current function body.
     current_fail_kinds: Vec<String>,
+
+    /// Monotonically increasing counter for unique closure naming across all
+    /// nesting levels.  Copied from parent when creating nested codegens.
+    closure_counter: usize,
 }
 
 impl Codegen {
@@ -66,6 +70,7 @@ impl Codegen {
             declared_errors: FxHashSet::default(),
             current_error_kind: None,
             current_fail_kinds: Vec::new(),
+            closure_counter: 0,
         }
     }
 
@@ -325,10 +330,9 @@ impl Codegen {
                 self.emit(Instruction::Jump(0));
                 Ok(0)
             }
-            //  Async / Await (stub)
+            //  Async / Await
             AstNode::AsyncFun { name, params, body, loc } => {
-                // For now, treat async fun as a regular fun (synchronous fallback)
-                self.compile_func(name, params, body, *loc);
+                self.compile_async_func(name, params, body, *loc);
                 Ok(0)
             }
             AstNode::Await(expr, loc) => {
@@ -604,6 +608,9 @@ impl Codegen {
                 Ok(0)
             }
 
+            //  Modules — not yet implemented in runtime, compile as no-op
+            AstNode::Use { .. } => Ok(0),
+
             //  Misc
             _ => {
                 Err(JitError::parsing(
@@ -867,21 +874,125 @@ impl Codegen {
         self.function_map.insert(name.to_string(), idx);
     }
 
+    /// Compile an async function — creates a pending return promise at the
+    /// start so callers immediately get a Promise, even if the body suspends
+    /// on an internal await.  The promise is resolved when the body returns.
+    fn compile_async_func(&mut self, name: &str, params: &[String], body: &[AstNode], _loc: Loc) {
+        let old_locals = std::mem::take(&mut self.locals);
+        let old_reg = self.next_reg;
+        let old_in_fn = self.is_in_function;
+        let saved_instrs = std::mem::take(&mut self.instructions);
+
+        self.is_in_function = true;
+        self.next_reg = 0;
+        for (i, p) in params.iter().enumerate() {
+            self.locals.insert(p.clone(), VarInfo { idx: i, is_global: false });
+            self.next_reg = i + 1;
+        }
+        // Register 0..params.len()-1 = params, next = return_promise
+        let ret_promise_reg = self.alloc_reg();
+        self.emit(Instruction::MakePendingPromise { dst: ret_promise_reg });
+
+        if let Err(_) = self.compile_block(body) {
+            self.emit(Instruction::Return(None));
+        }
+        // Replace the final return with ResolvePromise + Return(ret_promise)
+        if let Some(Instruction::Return(reg)) = self.instructions.pop() {
+            if let Some(value_reg) = reg {
+                self.emit(Instruction::ResolvePromise { promise: ret_promise_reg, value: value_reg });
+            } else {
+                // No return value — resolve with nil
+                let nil_reg = self.alloc_reg();
+                self.emit(Instruction::LoadLiteral { dst: nil_reg, val: Value::from_bits(0) });
+                self.emit(Instruction::ResolvePromise { promise: ret_promise_reg, value: nil_reg });
+            }
+            self.emit(Instruction::Return(Some(ret_promise_reg)));
+        } else {
+            // No return instruction at all — body ran to end without returning
+            let nil_reg = self.alloc_reg();
+            self.emit(Instruction::LoadLiteral { dst: nil_reg, val: Value::from_bits(0) });
+            self.emit(Instruction::ResolvePromise { promise: ret_promise_reg, value: nil_reg });
+            self.emit(Instruction::Return(Some(ret_promise_reg)));
+        }
+        let name_id = self.intern(name);
+        let func_body = std::mem::replace(&mut self.instructions, saved_instrs);
+        let locals_count = self.next_reg;
+
+        self.locals = old_locals;
+        self.next_reg = old_reg;
+        self.is_in_function = old_in_fn;
+
+        let idx = self.functions.len();
+        self.functions.push(UserFunction {
+            name_id,
+            params_count: params.len(),
+            locals_count,
+            instructions: Arc::from(func_body),
+        });
+        self.function_map.insert(name.to_string(), idx);
+    }
+
     //  Closure
 
     fn compile_closure(&mut self, params: &[String], body: &AstNode, _loc: Loc) -> Result<usize, JitError> {
+        // Create a fresh codegen for the closure body, but share the closure
+        // counter so nested closures get globally unique names.
         let mut func = Codegen::new();
+        func.closure_counter = self.closure_counter;
         func.is_in_function = true;
         for (i, p) in params.iter().enumerate() {
             func.locals.insert(p.clone(), VarInfo { idx: i, is_global: false });
             func.next_reg = i + 1;
         }
         let captures: Vec<String> = Vec::new(); // TODO: free-variable analysis
+
+        // Compile body — may add nested closures to func.functions.
         let result_reg = func.compile_node(body).unwrap_or(0);
-        if !matches!(func.instructions.last(), Some(Instruction::Return(_))) {
-            func.emit(Instruction::Return(Some(result_reg)));
+
+        // Transfer nested closures to self.functions with globally unique
+        // names using self.closure_counter.
+        for mut nested in std::mem::take(&mut func.functions) {
+            let new_name = format!("__closure_{}", self.closure_counter);
+            self.closure_counter += 1;
+            nested.name_id = self.intern(&new_name);
+            self.functions.push(nested);
         }
-        let closure_name = format!("__closure_{}", self.functions.len());
+        // Update self.closure_counter to include any nested increments
+        self.closure_counter = std::cmp::max(self.closure_counter, func.closure_counter);
+
+        // Fix up ALL instructions that reference string-pool indices from
+        // func's pool — at runtime the main pool is used, so name_id values
+        // from func's separate pool would resolve to wrong strings.
+        for instr in &mut func.instructions {
+            match instr {
+                Instruction::MakeClosure { name_id, .. }
+                | Instruction::ObjectGet { name_id, .. }
+                | Instruction::ObjectSet { name_id, .. } => {
+                    if let Some(name) = func.string_pool.get(*name_id as usize) {
+                        *name_id = self.intern(name);
+                    }
+                }
+                Instruction::Call(data) => {
+                    if let Some(name) = func.string_pool.get(data.name_id as usize) {
+                        data.name_id = self.intern(name);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // Only expression-body closures (|x| x * 2) get implicit return.
+        // Block-body closures (|x| { ... }) must use explicit `return`.
+        let is_expr_body = !matches!(body, AstNode::Block(_, _));
+        if is_expr_body && !matches!(func.instructions.last(), Some(Instruction::Return(_))) {
+            func.emit(Instruction::Return(Some(result_reg)));
+        } else if !matches!(func.instructions.last(), Some(Instruction::Return(_))) {
+            func.emit(Instruction::Return(None));
+        }
+
+        // Use the shared closure counter for unique naming.
+        let closure_name = format!("__closure_{}", self.closure_counter);
+        self.closure_counter += 1;
         let name_id = self.intern(&closure_name);
         self.functions.push(UserFunction {
             name_id,

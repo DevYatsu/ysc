@@ -17,7 +17,7 @@ for i in 0..len(evens) {
 
 // filter with block closure
 odds = numbers.filter(|x| {
-  x % 2 != 0
+  ret x % 2 != 0
 })
 print("odds: " + str(len(odds)))
 

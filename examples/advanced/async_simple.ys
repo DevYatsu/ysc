@@ -1,7 +1,7 @@
 // Basic async/await demonstration
 // async functions compile to regular functions for now
 async fun greet(name) {
-    return "Hello, " + name
+    ret "Hello, " + name
 }
 
 // Calling an async function

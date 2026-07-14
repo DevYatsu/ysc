@@ -1,8 +1,8 @@
-//! Network built-ins: `fetch`, `serve`.
+//! Network built-ins: `fetch`, `serve`, `spawn`.
 //!
 //! Uses `ureq` for blocking HTTP requests and `std::net` for TCP.
 
-use crate::context::{Callable, Context, NativeFn};
+use crate::context::{Callable, Completion, Context, NativeFn, SpawnedTask};
 use crate::heap::ManagedObject;
 use crate::vm::execute_bytecode;
 use crate::vm::PromiseState;
@@ -17,6 +17,7 @@ use ys_core::error::JitError;
 pub fn register(fns: &mut FxHashMap<String, NativeFn>) {
     fns.insert("fetch".into(), Arc::new(native_fetch));
     fns.insert("serve".into(), Arc::new(native_serve));
+    fns.insert("spawn".into(), Arc::new(native_spawn));
 }
 
 /// Wrap a value in a resolved Promise on the heap.
@@ -41,22 +42,34 @@ fn native_fetch(ctx: &Arc<Context>, args: &[Value]) -> Result<Value, JitError> {
             "fetch(url) requires a string URL as the first argument", 0, 0,
         ))?;
 
-    let result = match ureq::get(&url).call() {
-        Ok(resp) => {
-            let status = resp.status();
-            let mut reader = resp.into_body().into_reader();
-            let mut body = String::new();
-            let _ = reader.read_to_string(&mut body);
-            println!("Fetch {}: {} - {}", url, status, body);
-            // Return the response body as a string value
-            Value::sso(&body).unwrap_or_else(|| ctx.alloc(ManagedObject::String(Arc::from(body))))
-        }
-        Err(e) => {
-            eprintln!("Fetch {} failed: {}", url, e);
-            return Ok(rejected_promise(ctx, lookup_failure_id(ctx, "NetworkError")));
-        }
-    };
-    Ok(resolved_promise(ctx, result))
+    // Create a pending promise that the event loop will resolve.
+    let promise = ctx.alloc(ManagedObject::Promise(PromiseState::Pending { continuation: None }));
+    let promise_oid = promise.as_obj_id().unwrap();
+
+    let ctx_clone = ctx.clone();
+    let url_clone = url.clone();
+    std::thread::spawn(move || {
+        let result = match ureq::get(&url_clone).call() {
+            Ok(resp) => {
+                let status = resp.status();
+                let mut reader = resp.into_body().into_reader();
+                let mut body = String::new();
+                let _ = reader.read_to_string(&mut body);
+                println!("Fetch {}: {} - {}", url_clone, status, body);
+                Ok(body)
+            }
+            Err(e) => {
+                eprintln!("Fetch {} failed: {}", url_clone, e);
+                Err("NetworkError".to_string())
+            }
+        };
+        ctx_clone.completions.lock().unwrap().push(Completion {
+            promise_oid,
+            result,
+        });
+    });
+
+    Ok(promise)
 }
 
 fn native_serve(ctx: &Arc<Context>, args: &[Value]) -> Result<Value, JitError> {
@@ -103,6 +116,50 @@ fn native_serve(ctx: &Arc<Context>, args: &[Value]) -> Result<Value, JitError> {
     let msg = format!("Server started on port {}", port);
     let val = Value::sso(&msg).unwrap_or_else(|| ctx.alloc(ManagedObject::String(Arc::from(msg))));
     Ok(resolved_promise(ctx, val))
+}
+
+fn native_spawn(ctx: &Arc<Context>, args: &[Value]) -> Result<Value, JitError> {
+    if args.is_empty() {
+        return Err(JitError::runtime("spawn(fn, ...) requires at least a function name or closure", 0, 0));
+    }
+
+    // Resolve the callable — by name string or closure value
+    let (callable, call_args) = if let Some(name) = ctx.value_as_string(args[0]) {
+        let c = ctx.get_callable_by_name(&name)
+            .cloned()
+            .ok_or_else(|| JitError::runtime(format!("spawn: unknown function '{}'", name), 0, 0))?;
+        (c, args[1..].to_vec())
+    } else if let Some(oid) = args[0].as_obj_id() {
+        let objects = ctx.heap.objects.get();
+        let entry = objects.get(oid as usize).and_then(|o| o.as_ref());
+        match entry.map(|o| &o.obj) {
+            Some(ManagedObject::Closure(cl)) => {
+                let c = ctx.get_callable(cl.name_id)
+                    .cloned()
+                    .ok_or_else(|| JitError::runtime("spawn: closure references unknown function", 0, 0))?;
+                // Prepend captured values as arguments
+                let mut all_args: Vec<Value> = cl.captures.clone();
+                all_args.extend_from_slice(&args[1..]);
+                (c, all_args)
+            }
+            _ => return Err(JitError::runtime("spawn: first argument must be a function name or closure", 0, 0)),
+        }
+    } else {
+        return Err(JitError::runtime("spawn: first argument must be a function name or closure", 0, 0));
+    };
+
+    // Create a pending promise
+    let promise = ctx.alloc(ManagedObject::Promise(PromiseState::Pending { continuation: None }));
+    let promise_oid = promise.as_obj_id().unwrap();
+
+    // Queue the spawned task — the event loop will execute it on the main thread
+    ctx.spawned_tasks.get_mut().push(SpawnedTask {
+        promise_oid,
+        callable,
+        args: call_args,
+    });
+
+    Ok(promise)
 }
 
 fn handle_connection(mut stream: TcpStream, ctx: &Arc<Context>, handler_name: &str) {

@@ -14,7 +14,7 @@ print("range sum: " + str(sum))
 // Nested list operations
 matrix = [[1, 2, 3], [4, 5, 6], [7, 8, 9]]
 row_sums = matrix.map(|row| {
-  row.reduce(0, |a, v| a + v)
+  ret row.reduce(0, |a, v| a + v)
 })
 print("row sums:")
 for i in 0..len(row_sums) {

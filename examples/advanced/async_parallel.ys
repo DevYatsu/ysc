@@ -1,20 +1,21 @@
-// Demonstrates multiple async functions
-async fun process(n) {
-    let doubled = n * 2
-    return "Result: " + str(doubled)
-}
+// Parallel HTTP fetches — all requests fire simultaneously.
+//
+// Call `fetch()` without await to get a pending promise.
+// Store promises in a list, then `await [p1, p2, ...]`
+// resolves all in parallel and returns a list of results.
 
-// Sequential async calls
-let results = []
-results = results.concat(await process(1))
-results = results.concat(await process(2))
-results = results.concat(await process(3))
+print("=== Parallel fetches ===")
+let t1 = time()
+
+// Fire both requests at once (no await — they run in background threads)
+let p1 = fetch("https://example.com")
+let p2 = fetch("https://example.com")
+
+// Await the array — resolves all in parallel
+let results = await [p1, p2]
+
+let t2 = time()
 print(results)
-
-// Async function composition
-async fun add(a, b) {
-    return a + b
-}
-
-let sum = await add(10, 20)
-print("Sum: " + str(sum))
+print("Got " + str(len(results)) + " responses in " + str(t2 - t1) + " seconds")
+print("Response 1: " + str(len(results[0])) + " bytes")
+print("Response 2: " + str(len(results[1])) + " bytes")

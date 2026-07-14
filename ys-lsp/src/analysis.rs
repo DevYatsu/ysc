@@ -62,7 +62,7 @@ pub fn analyze_source(source: &str) -> AnalysisResults {
             Ok(token) => {
                 // Classify token for semantic highlighting.
                 let variant = match &token {
-                    Token::Fun | Token::Return | Token::Continue | Token::If | Token::Else
+                    Token::Fun | Token::Ret | Token::Continue | Token::If | Token::Else
                     | Token::For | Token::While | Token::In | Token::Use | Token::Super
                     | Token::Exp | Token::Move | Token::And | Token::Or
                         => LspTokenVariant::Keyword,

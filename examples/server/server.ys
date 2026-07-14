@@ -1,7 +1,7 @@
-# Simple HTTP server
-handler = |req| {
-  "Hello from YatsuScript!"
+// Simple HTTP server (serve() expects a function name string)
+fun handler(req) {
+  ret "Hello from YatsuScript!"
 }
 
 print("Serving on http://localhost:8080")
-serve(8080, handler)
+serve(8080, "handler")

@@ -113,7 +113,7 @@ impl<'source> AstParser<'source> {
                     ))
                 }
             }
-            Token::Return => {
+            Token::Ret => {
                 self.advance()?;
                 let value = if is_stmt_end(self.peek()) { None }
                             else { Some(Box::new(self.parse_expression()?)) };

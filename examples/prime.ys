@@ -16,7 +16,7 @@ fun sieve(limit) {
       total = total + 1
     }
   }
-  return total
+  ret total
 }
 
 ANSWER = 78498

@@ -5,6 +5,30 @@ use rustc_hash::FxHashMap;
 
 use ys_core::error::JitError;
 
+/// A completed async operation — resolves or rejects a pending promise.
+/// Background threads push these; the event loop drains them on the main thread.
+/// The value is communicated as a raw string; the event loop turns it into a
+/// proper heap-allocated Value (string, number, etc.) before resolving.
+#[derive(Clone)]
+pub struct Completion {
+    /// Object ID of the pending promise to resolve/reject.
+    pub promise_oid: u32,
+    /// `Ok(body_string)` for resolution (response body, sleep nil, etc.)
+    /// `Err(failure_name)` for rejection (interned into string pool).
+    pub result: Result<String, String>,
+}
+
+/// A spawned function call queued for execution on the main thread.
+/// The event loop drains these between promise polling iterations.
+pub struct SpawnedTask {
+    /// Object ID of the pending promise to resolve/reject when done.
+    pub promise_oid: u32,
+    /// The callable to invoke.
+    pub callable: Callable,
+    /// Arguments to pass to the callable (already on the main thread's heap).
+    pub args: Vec<Value>,
+}
+
 //  Backend trait
 
 /// An execution backend for compiled YatsuScript programs.
@@ -43,8 +67,17 @@ pub struct Context {
     pub heap:       Heap,
     pub string_pool: Arc<[Arc<str>]>,
     pub globals:    SyncCell<Vec<Value>>,
-    pub callables:  SyncCell<rustc_hash::FxHashMap<u32, Callable>>,
+    /// Callables indexed by name_id (string-pool index) for O(1) lookup.
+    pub callables:  SyncCell<Vec<Option<Callable>>>,
     pub callables_by_name: SyncCell<FxHashMap<String, Callable>>,
+    /// Pending promises that the event loop needs to poll on each iteration.
+    /// Each entry is a Value holding an object ID of a Promise in Pending state.
+    pub pending_tasks: SyncCell<Vec<Value>>,
+    /// Completions pushed by background threads (fetch, sleep, etc.).
+    /// Drained by the event loop on each tick. Uses a real Mutex for thread safety.
+    pub completions: std::sync::Mutex<Vec<Completion>>,
+    /// Spawned function calls queued for execution on the main thread.
+    pub spawned_tasks: SyncCell<Vec<SpawnedTask>>,
 }
 
 impl Context {
@@ -63,8 +96,11 @@ impl Context {
             },
             string_pool:       std::sync::Arc::from(vec![std::sync::Arc::from("")]),
             globals:           SyncCell::new(Vec::new()),
-            callables:         SyncCell::new(rustc_hash::FxHashMap::default()),
+            callables:         SyncCell::new(Vec::new()),
             callables_by_name: SyncCell::new(rustc_hash::FxHashMap::default()),
+            pending_tasks:     SyncCell::new(Vec::new()),
+            completions:       std::sync::Mutex::new(Vec::new()),
+            spawned_tasks:     SyncCell::new(Vec::new()),
         }
     }
 
@@ -93,9 +129,9 @@ impl Context {
         }
     }
 
-    /// Retrieve a callable — first by name_id (fast path), then by string name.
+    /// Retrieve a callable by its name_id (string-pool index) — O(1) Vec index.
     pub fn get_callable(&self, id: u32) -> Option<&Callable> {
-        self.callables.get().get(&id)
+        self.callables.get().get(id as usize).and_then(|c| c.as_ref())
     }
 
     /// Retrieve a callable by its string name (primary API for embedding).
@@ -113,7 +149,10 @@ impl Context {
     /// Try to read a value as a string (SSO, heap, or string pool).
     pub fn value_as_string(&self, v: Value) -> Option<String> {
         if let Some(s) = v.as_sso_str() {
-            return std::str::from_utf8(&s).ok().map(|s| s.to_string());
+            // Slice to actual string length to avoid trailing null bytes from
+            // the 6-byte SSO buffer padding.
+            let len = v.sso_len().unwrap_or(6);
+            return std::str::from_utf8(&s[..len]).ok().map(|s| s.to_string());
         }
         // Pool strings have their own tag to avoid ID collision with heap objects.
         if let Some(id) = v.as_pool_id() {
@@ -136,7 +175,8 @@ impl Context {
         if let Some(id) = v.as_pool_id() { return Some(id); }
         if let Some(oid) = v.as_obj_id() { return Some(oid); }
         if let Some(s) = v.as_sso_str() {
-            let s_str = std::str::from_utf8(&s).ok()?;
+            let len = v.sso_len().unwrap_or(6);
+            let s_str = std::str::from_utf8(&s[..len]).ok()?;
             return self.string_pool.iter().position(|p| p.as_ref() == s_str).map(|i| i as u32);
         }
         None

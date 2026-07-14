@@ -119,6 +119,19 @@ impl ManagedObject {
                             }
                         }
                     }
+                    crate::vm::PromiseState::Compound { sub_promises, results, continuation } => {
+                        for sub in sub_promises.iter() {
+                            if let Some(id) = sub { f(*id); }
+                        }
+                        for v in results.iter() {
+                            if let Some(id) = v.as_obj_id() { f(id); }
+                        }
+                        if let Some(frame) = continuation {
+                            for v in frame.registers.iter() {
+                                if let Some(id) = v.as_obj_id() { f(id); }
+                            }
+                        }
+                    }
                 }
             }
             // Leaf types — no children.

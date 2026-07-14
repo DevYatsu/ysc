@@ -117,7 +117,7 @@ fn format_token(token: &Token) -> String {
         Token::For           => "for".to_string(),
         Token::While         => "while".to_string(),
         Token::In            => "in".to_string(),
-        Token::Return        => "return".to_string(),
+        Token::Ret           => "ret".to_string(),
         Token::Fun           => "fun".to_string(),
         Token::Continue      => "continue".to_string(),
         Token::Equals        => "=".to_string(),

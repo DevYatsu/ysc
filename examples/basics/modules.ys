@@ -20,13 +20,13 @@ use utils.parse.parse_line
 
 // Items marked `exp` are visible to importing modules
 exp fun public_api() {
-  "this is visible to importers"
+  ret "this is visible to importers"
 }
 
 fun internal_helper() {
-  "this is private to this module"
+  ret "this is private to this module"
 }
 
-// Exported variables
-exp VERSION = "1.0.0"
-exp MAX_SIZE = 1000
+// Variables (exp on variables is not yet supported)
+VERSION = "1.0.0"
+MAX_SIZE = 1000
