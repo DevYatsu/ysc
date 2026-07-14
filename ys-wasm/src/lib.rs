@@ -274,7 +274,7 @@ pub fn disassemble(source: &str) -> JsValue {
                 js_sys::Reflect::set(&f, &"params".into(), &JsValue::from(func.params_count as u32)).ok();
                 js_sys::Reflect::set(&f, &"locals".into(), &JsValue::from(func.locals_count as u32)).ok();
                 let instrs = js_sys::Array::new();
-                for (i, ins) in func.instructions.iter().enumerate() {
+                for (_, ins) in func.instructions.iter().enumerate() {
                     instrs.push(&JsValue::from(format!("{:?}", ins)));
                 }
                 js_sys::Reflect::set(&f, &"instructions".into(), &instrs.into()).ok();
@@ -283,7 +283,7 @@ pub fn disassemble(source: &str) -> JsValue {
             js_sys::Reflect::set(&out, &"functions".into(), &funcs.into()).ok();
 
             let main = js_sys::Array::new();
-            for (i, ins) in program.instructions.iter().enumerate() {
+            for (_, ins) in program.instructions.iter().enumerate() {
                 main.push(&JsValue::from(format!("{:?}", ins)));
             }
             js_sys::Reflect::set(&out, &"main".into(), &main.into()).ok();
