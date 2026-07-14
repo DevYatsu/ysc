@@ -2,8 +2,11 @@
 name = "ys-wasm"
 version = "0.1.0"
 edition = "2024"
-description = "YatsuScript WASM bindings"
+description = "YatsuScript language interpreter for the browser — eval, AST, and bytecode via WASM"
 license = "MIT"
+homepage = "https://github.com/DevYatsu/ysc"
+repository = "https://github.com/DevYatsu/ysc"
+keywords = ["yatsuscript", "scripting", "language", "wasm", "interpreter"]
 
 [lib]
 crate-type = ["cdylib"]
