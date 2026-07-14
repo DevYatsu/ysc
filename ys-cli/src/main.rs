@@ -6,7 +6,7 @@ mod fmt;
 mod error_display;
 
 #[derive(Parser)]
-#[command(name = "yatsuscript")]
+#[command(name = "ysc")]
 #[command(version)]
 #[command(about = "YatsuScript CLI: runner, REPL, and code formatter.")]
 struct Cli {

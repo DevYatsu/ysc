@@ -1,4 +1,4 @@
-# ys-cli (yatsuscript)
+# ys-cli (ysc)
 
 > The user-facing command-line tool for YatsuScript: Execution, REPL, and Code Formatting.
 
@@ -19,7 +19,7 @@ cargo install --path ys-cli
 ### Running Scripts
 
 ```bash
-yatsuscript script.ys
+ysc script.ys
 # or
 cargo run -p ys-cli -- script.ys
 ```
@@ -29,7 +29,7 @@ cargo run -p ys-cli -- script.ys
 Start a persistent session with history support:
 
 ```bash
-yatsuscript
+ysc
 ```
 
 ### Code Formatting
@@ -37,7 +37,7 @@ yatsuscript
 Auto-format all `.ys` files in the current directory:
 
 ```bash
-yatsuscript fmt .
+ysc fmt .
 ```
 
 ## Commands

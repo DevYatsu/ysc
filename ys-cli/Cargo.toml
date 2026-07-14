@@ -6,7 +6,7 @@ description = "YatsuScript CLI: runner, REPL, and code formatter."
 license     = "MIT"
 
 [[bin]]
-name = "yatsuscript"
+name = "ysc"
 path = "src/main.rs"
 
 [dependencies]

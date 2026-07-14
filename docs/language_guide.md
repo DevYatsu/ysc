@@ -402,7 +402,7 @@ YatsuScript is dynamically typed with NaN-boxed values:
 YatsuScript includes a built-in code formatter:
 
 ```bash
-yatsuscript fmt <file-or-directory>
+ysc fmt <file-or-directory>
 ```
 
 The formatter operates on the token stream (no AST needed) and normalizes indentation, spacing, and line breaks.

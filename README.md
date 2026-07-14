@@ -8,8 +8,8 @@ YatsuScript is a lightweight scripting language with a register-based VM, NaN-bo
 
 ```bash
 cargo install --path ys-cli
-yatsuscript examples/fib.ys
-yatsuscript              # REPL
+ysc examples/fib.ys
+ysc              # REPL
 ```
 
 ## Language Examples
@@ -125,7 +125,7 @@ fun internal_helper() { "private" }
 |-------|------|
 | `ys-core` | Lexer, Parser, AST, Optimizer, Bytecode Compiler |
 | `ys-runtime` | Register VM, Generational GC, Heap, Native Functions |
-| `ys-cli` | CLI binary (`yatsuscript`), REPL, formatter |
+| `ys-cli` | CLI binary (`ysc`), REPL, formatter |
 | `ys-lsp` | Language Server Protocol implementation |
 
 ## Documentation
