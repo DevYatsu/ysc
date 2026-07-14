@@ -7,6 +7,7 @@
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
+#[cfg(feature = "parallel")]
 const PARALLEL_THRESHOLD: usize = 10000;
 
 use crate::context::{Context, NativeFn};

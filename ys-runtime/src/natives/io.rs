@@ -4,6 +4,7 @@ use crate::context::NativeFn;
 use crate::heap::ManagedObject;
 use crate::value_fmt::stringify_value;
 use rustc_hash::FxHashMap;
+#[cfg(not(target_arch = "wasm32"))]
 use std::io::Write as _;
 use std::sync::Arc;
 use ys_core::compiler::Value;

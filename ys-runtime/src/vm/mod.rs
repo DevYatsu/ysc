@@ -527,8 +527,8 @@ thread_local! {
     static CURRENT_FRAMES: std::cell::UnsafeCell<*const Vec<CallFrame>> = const { std::cell::UnsafeCell::new(std::ptr::null()) };
 }
 
-/// Set before calling a native function so the function (e.g. print) can
-/// annotate its output with the source line number.
+// Set before calling a native function so the function (e.g. print) can
+// annotate its output with the source line number.
 std::thread_local! {
     static CALL_LOC: std::cell::Cell<Option<(u32, u32)>> = const { std::cell::Cell::new(None) };
 }

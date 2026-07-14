@@ -1,7 +1,10 @@
 //! Time built-ins: `time`, `timestamp`, `sleep`.
 
-use crate::context::{Completion, NativeFn};
+use crate::context::NativeFn;
 use crate::heap::ManagedObject;
+#[cfg(feature = "networking")]
+use crate::context::Completion;
+#[cfg(feature = "networking")]
 use crate::vm::PromiseState;
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
@@ -21,7 +24,7 @@ pub fn register(fns: &mut FxHashMap<String, NativeFn>) {
         Ok(ctx.alloc(ManagedObject::Timestamp(std::time::Instant::now())))
     }));
 
-    fns.insert("sleep".into(), Arc::new(|ctx, args| {
+    fns.insert("sleep".into(), Arc::new(|_ctx, args| {
         let [val] = args else {
             return Err(JitError::runtime(
                 "sleep() expects 1 argument",
@@ -36,9 +39,9 @@ pub fn register(fns: &mut FxHashMap<String, NativeFn>) {
         // Background-thread path (native/threaded targets)
         #[cfg(feature = "networking")]
         {
-            let promise = ctx.alloc(ManagedObject::Promise(PromiseState::Pending { continuation: None }));
+            let promise = _ctx.alloc(ManagedObject::Promise(PromiseState::Pending { continuation: None }));
             let promise_oid = promise.as_obj_id().unwrap();
-            let ctx_clone = ctx.clone();
+            let ctx_clone = _ctx.clone();
             std::thread::spawn(move || {
                 std::thread::sleep(std::time::Duration::from_millis(ms as u64));
                 ctx_clone.completions.lock().unwrap().push(Completion {
