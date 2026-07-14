@@ -223,6 +223,7 @@ const $status = document.getElementById('status');
 
 let editor;
 let wasmEval;
+let wasmAst, wasmBytecode;
 
 require.config({
   paths: { vs: 'https://cdn.jsdelivr.net/npm/monaco-editor@0.52.0/min/vs' }
@@ -314,7 +315,7 @@ require(['vs/editor/editor.main'], async function () {
     const wasm = await import('../pkg/ys_wasm.js');
     await wasm.default();
     wasmEval = wasm._eval;
-    wasmAst = wasm._parse_ast;
+    wasmAst = wasm._parseAst;
     wasmBytecode = wasm._disassemble;
     $status.textContent = 'Ready';
     $runBtn.disabled = false;
@@ -331,8 +332,6 @@ const $bytecodeView = document.getElementById('bytecodeView');
 const $tabOutput = document.getElementById('tabOutput');
 const $tabAst = document.getElementById('tabAst');
 const $tabBytecode = document.getElementById('tabBytecode');
-
-let wasmAst, wasmBytecode;
 
 function activateTab(tab) {
   [$tabOutput, $tabAst, $tabBytecode].forEach(t => t.classList.remove('active'));
@@ -352,22 +351,14 @@ function refreshAst() {
   if (!wasmAst || !editor) return;
   const source = editor.getValue();
   const result = wasmAst(source);
-  if (result.startsWith('ERROR:')) {
-    $astView.textContent = result.slice(6);
-  } else {
-    $astView.textContent = result;
-  }
+  $astView.textContent = result.success ? result.output : result.error;
 }
 
 function refreshBytecode() {
   if (!wasmBytecode || !editor) return;
   const source = editor.getValue();
   const result = wasmBytecode(source);
-  if (result.startsWith('ERROR:')) {
-    $bytecodeView.textContent = result.slice(6);
-  } else {
-    $bytecodeView.textContent = result;
-  }
+  $bytecodeView.textContent = result.success ? result.output : result.error;
 }
 
 // Run the current code
@@ -384,21 +375,15 @@ function runCode() {
     const result = wasmEval(source);
     const elapsed = ((performance.now() - t0) / 1000).toFixed(4);
 
-    // Check for errors — the WASM module prefixes errors with "ERROR:"
-    const errorIdx = result.lastIndexOf('ERROR:');
-    if (errorIdx >= 0) {
-      const output = result.slice(0, errorIdx).trimEnd();
-      const error = result.slice(errorIdx + 6);
-      let html = '';
-      if (output) {
-        html += formatOutput(output);
-      }
-      html += '<span class="error-text">' + escapeHtml(error) + '</span>';
-      $output.innerHTML = html;
-    } else if (result === 'ok') {
-      $output.innerHTML = ''; // no output
+    if (result.success) {
+      $output.innerHTML = result.output ? formatOutput(result.output) : '';
     } else {
-      $output.innerHTML = formatOutput(result);
+      let html = '';
+      if (result.output) {
+        html += formatOutput(result.output) + '\n';
+      }
+      html += '<span class="error-text">' + escapeHtml(result.error || 'Unknown error') + '</span>';
+      $output.innerHTML = html;
     }
     $timing.textContent = 'Completed in ' + elapsed + 's';
   } catch (e) {
