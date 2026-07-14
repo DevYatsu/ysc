@@ -46,10 +46,17 @@
   .toolbar .status { font-size: 12px; color: #888; margin-left: auto; }
 
   .output-header {
+    display: flex; gap: 0;
+    background: #252526; border-bottom: 1px solid #444;
+  }
+  .output-header .tab {
     padding: 0.5rem 1rem; font-size: 12px; font-weight: 600;
     text-transform: uppercase; letter-spacing: 0.05em;
-    color: #888; background: #252526; border-bottom: 1px solid #444;
+    color: #888; cursor: pointer; border-bottom: 2px solid transparent;
+    user-select: none;
   }
+  .output-header .tab:hover { color: #ccc; }
+  .output-header .tab.active { color: #fff; border-bottom-color: #569cd6; }
   .output-content { flex: 1; overflow: auto; }
   #timing { color: #6a9955; font-size: 12px; margin-top: 0.5rem; }
   .error-text { color: #f48771; }
@@ -80,11 +87,17 @@
   </div>
 
   <div class="output-pane">
-    <div class="output-header">Output</div>
+    <div class="output-header">
+      <span class="tab active" id="tabOutput">Output</span>
+      <span class="tab" id="tabAst">AST</span>
+      <span class="tab" id="tabBytecode">Bytecode</span>
+    </div>
     <div class="output-content">
       <pre id="output">Welcome to YatsuScript!
 
 Write code in the editor and press ▶ Run.</pre>
+      <pre id="astView" style="display:none; color:#ce9178; font-size:12px"></pre>
+      <pre id="bytecodeView" style="display:none; color:#9cdcfe; font-size:11px"></pre>
       <div id="timing"></div>
     </div>
   </div>
@@ -301,6 +314,8 @@ require(['vs/editor/editor.main'], async function () {
     const wasm = await import('../pkg/ys_wasm.js');
     await wasm.default();
     wasmEval = wasm._eval;
+    wasmAst = wasm._parse_ast;
+    wasmBytecode = wasm._disassemble;
     $status.textContent = 'Ready';
     $runBtn.disabled = false;
   } catch (e) {
@@ -309,6 +324,52 @@ require(['vs/editor/editor.main'], async function () {
     console.error(e);
   }
 });
+
+// ── Tab switching ──────────────────────────────────────
+const $output = document.getElementById('output');
+const $astView = document.getElementById('astView');
+const $bytecodeView = document.getElementById('bytecodeView');
+const $tabOutput = document.getElementById('tabOutput');
+const $tabAst = document.getElementById('tabAst');
+const $tabBytecode = document.getElementById('tabBytecode');
+
+let wasmAst, wasmBytecode;
+
+function activateTab(tab) {
+  [$tabOutput, $tabAst, $tabBytecode].forEach(t => t.classList.remove('active'));
+  tab.classList.add('active');
+  $output.style.display = tab === $tabOutput ? '' : 'none';
+  $astView.style.display = tab === $tabAst ? '' : 'none';
+  $bytecodeView.style.display = tab === $tabBytecode ? '' : 'none';
+  if (tab === $tabAst) refreshAst();
+  if (tab === $tabBytecode) refreshBytecode();
+}
+
+$tabOutput.onclick = () => activateTab($tabOutput);
+$tabAst.onclick = () => activateTab($tabAst);
+$tabBytecode.onclick = () => activateTab($tabBytecode);
+
+function refreshAst() {
+  if (!wasmAst || !editor) return;
+  const source = editor.getValue();
+  const result = wasmAst(source);
+  if (result.startsWith('ERROR:')) {
+    $astView.textContent = result.slice(6);
+  } else {
+    $astView.textContent = result;
+  }
+}
+
+function refreshBytecode() {
+  if (!wasmBytecode || !editor) return;
+  const source = editor.getValue();
+  const result = wasmBytecode(source);
+  if (result.startsWith('ERROR:')) {
+    $bytecodeView.textContent = result.slice(6);
+  } else {
+    $bytecodeView.textContent = result;
+  }
+}
 
 // Run the current code
 function runCode() {
