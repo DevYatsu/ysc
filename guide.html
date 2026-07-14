@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Language Guide — ysc</title>
+<link rel="stylesheet" href="css/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='28' font-size='28'>⬡</text></svg>">
+</head>
+<body>
+
+<nav>
+  <a href="index.html" class="logo"><span>y</span>sc</a>
+  <a href="guide.html" class="active">Guide</a>
+  <a href="stdlib.html">Stdlib</a>
+  <a href="playground.html">Playground</a>
+  <a href="https://github.com/DevYatsu/ysc" class="github">GitHub</a>
+</nav>
+
+<div class="container content">
+
+<h1>Language Guide</h1>
+
+<h2>Variables</h2>
+<p>Variables are declared by assignment. No <code>let</code> keyword needed. Variables are mutable by default.</p>
+<pre><span class="cm">// declaration + assignment</span>
+x = 10
+name = <span class="str">"ysc"</span>
+flag = <span class="kw">true</span>
+
+<span class="cm">// reassignment</span>
+x = x + 5
+</pre>
+
+<h2>Functions</h2>
+<p>Declared with <code>fun</code>. The last expression is automatically returned in single-expression closures, but in block bodies you must use <code>ret</code>.</p>
+<pre><span class="kw">fun</span> <span class="fn">add</span>(a, b) {
+  <span class="kw">ret</span> a + b
+}
+
+<span class="cm">// single-expression closure (implicit return)</span>
+doubled = [1, 2, 3].<span class="fn">map</span>(|x| x * 2)
+
+<span class="cm">// block-body closure (needs explicit ret)</span>
+evens = [1, 2, 3].<span class="fn">filter</span>(|x| {
+  <span class="kw">ret</span> x % 2 == 0
+})
+</pre>
+
+<h2>Control Flow</h2>
+
+<h3>if / else if / else</h3>
+<pre>score = 85
+<span class="kw">if</span> score >= 90 {
+  <span class="fn">print</span>(<span class="str">"A"</span>)
+} <span class="kw">else</span> <span class="kw">if</span> score >= 80 {
+  <span class="fn">print</span>(<span class="str">"B"</span>)
+} <span class="kw">else</span> {
+  <span class="fn">print</span>(<span class="str">"C"</span>)
+}
+</pre>
+
+<h3>while</h3>
+<pre>n = 10
+total = 0
+<span class="kw">while</span> n > 0 {
+  total = total + n
+  n = n - 1
+}
+</pre>
+
+<h3>for — unified iteration</h3>
+<p><code>for</code> works on ranges, lists, and objects through a single <code>ForNext</code> instruction.</p>
+<pre><span class="cm">// Range</span>
+<span class="kw">for</span> i <span class="kw">in</span> 0..5 {
+  <span class="fn">print</span>(i)
+}
+
+<span class="cm">// List</span>
+items = [10, 20, 30]
+<span class="kw">for</span> x <span class="kw">in</span> items {
+  <span class="fn">print</span>(x)
+}
+
+<span class="cm">// Object (iterates keys)</span>
+obj = {name: <span class="str">"Alice"</span>, age: 30}
+<span class="kw">for</span> k <span class="kw">in</span> obj {
+  <span class="fn">print</span>(k + <span class="str">": "</span> + <span class="fn">str</span>(obj[k]))
+}
+</pre>
+
+<h2>Compound Assignment</h2>
+<pre>x = 10
+x += 5   <span class="cm">// 15</span>
+x -= 3   <span class="cm">// 12</span>
+x *= 2   <span class="cm">// 24</span>
+x /= 4   <span class="cm">// 6</span>
+x %= 3   <span class="cm">// 0</span>
+</pre>
+
+<h2>Collections</h2>
+
+<h3>Lists</h3>
+<pre>fibo = [0, 1, 1, 2, 3, 5]
+<span class="fn">print</span>(fibo[0])        <span class="cm">// 0</span>
+<span class="fn">print</span>(len(fibo))      <span class="cm">// 6</span>
+
+<span class="cm">// Rust-style repeat initialization</span>
+scores = [0; 5]
+scores[0] = 95
+</pre>
+
+<h3>Objects</h3>
+<pre>person = {name: <span class="str">"Alice"</span>, age: 30}
+<span class="fn">print</span>(person.name)     <span class="cm">// Alice</span>
+<span class="fn">print</span>(person[<span class="str">"name"</span>])  <span class="cm">// Alice (bracket access)</span>
+
+<span class="cm">// Object methods</span>
+<span class="fn">print</span>(person.<span class="fn">keys</span>())    <span class="cm">// ["name", "age"]</span>
+<span class="fn">print</span>(person.<span class="fn">has</span>(<span class="str">"age"</span>)) <span class="cm">// true</span>
+</pre>
+
+<h2>String Methods</h2>
+<pre><span class="fn">print</span>(<span class="str">"hello"</span>.<span class="fn">upper</span>())          <span class="cm">// HELLO</span>
+<span class="fn">print</span>(<span class="str">"a,b,c"</span>.<span class="fn">split</span>(<span class="str">","</span>))    <span class="cm">// ["a","b","c"]</span>
+<span class="fn">print</span>(<span class="str">"hello"</span>.<span class="fn">contains</span>(<span class="str">"ell"</span>)) <span class="cm">// true</span>
+<span class="fn">print</span>(<span class="str">"42"</span>.<span class="fn">to_number</span>())         <span class="cm">// 42</span>
+</pre>
+
+<h2>Number Methods</h2>
+<pre><span class="fn">print</span>((3.14).<span class="fn">floor</span>())  <span class="cm">// 3</span>
+<span class="fn">print</span>(( -5).<span class="fn">abs</span>())     <span class="cm">// 5</span>
+<span class="fn">print</span>(9.<span class="fn">sqrt</span>())       <span class="cm">// 3</span>
+<span class="fn">print</span>(2.<span class="fn">pow</span>(3))        <span class="cm">// 8</span>
+</pre>
+
+<h2>Async / Await</h2>
+<p>Async functions return Promises. Use <code>await</code> to resolve. Awaiting an array resolves all promises in parallel.</p>
+<pre><span class="kw">async</span> <span class="kw">fun</span> <span class="fn">fetch_url</span>(url) {
+  <span class="kw">ret</span> <span class="kw">await</span> <span class="fn">fetch</span>(url)
+}
+
+<span class="cm">// Sequential</span>
+a = <span class="kw">await</span> <span class="fn">fetch_url</span>(<span class="str">"https://example.com"</span>)
+b = <span class="kw">await</span> <span class="fn">fetch_url</span>(<span class="str">"https://example.com"</span>)
+
+<span class="cm">// Parallel</span>
+p1 = <span class="fn">fetch_url</span>(<span class="str">"https://example.com"</span>)
+p2 = <span class="fn">fetch_url</span>(<span class="str">"https://example.com"</span>)
+results = <span class="kw">await</span> [p1, p2]
+</pre>
+
+<h2>Failure Handling</h2>
+<p>Failures are tagged NaN values that propagate through expressions. Use <code>or</code> for fallbacks and <code>except</code> for pattern matching.</p>
+<pre><span class="cm">// Fallback with 'or'</span>
+x = some_failing_expression <span class="kw">or</span> 0
+
+<span class="cm">// Pattern matching with 'except'</span>
+x = divide(a, b) <span class="kw">except</span> {
+  |DivisionByZero| 0
+  |_| -1
+}
+</pre>
+
+<h2>Modules</h2>
+<p>Use <code>use</code> to import from other modules. Items marked <code>exp</code> are public.</p>
+<pre><span class="kw">use</span> utils.parse
+<span class="kw">use</span> utils.format
+
+<span class="kw">exp</span> <span class="kw">fun</span> <span class="fn">public_api</span>() {
+  <span class="kw">ret</span> <span class="str">"visible to importers"</span>
+}
+</pre>
+
+<h2>List Methods</h2>
+<pre>numbers = [1, 2, 3, 4, 5]
+
+squares  = numbers.<span class="fn">map</span>(|x| x * x)     <span class="cm">// [1, 4, 9, 16, 25]</span>
+evens    = numbers.<span class="fn">filter</span>(|x| x % 2 == 0) <span class="cm">// [2, 4]</span>
+sum      = numbers.<span class="fn">reduce</span>(0, |a, v| a + v) <span class="cm">// 15</span>
+reversed = numbers.<span class="fn">reversed</span>()           <span class="cm">// [5, 4, 3, 2, 1]</span>
+first3   = numbers.<span class="fn">take</span>(3)               <span class="cm">// [1, 2, 3]</span>
+</pre>
+
+</div>
+
+<footer>
+  ysc — MIT license. Built with Rust.
+</footer>
+
+</body>
+</html>

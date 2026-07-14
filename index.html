@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ysc — the language</title>
+<link rel="stylesheet" href="css/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='28' font-size='28'>⬡</text></svg>">
+</head>
+<body>
+
+<nav>
+  <a href="index.html" class="logo"><span>y</span>sc</a>
+  <a href="guide.html">Guide</a>
+  <a href="stdlib.html">Stdlib</a>
+  <a href="playground.html">Playground</a>
+  <a href="https://github.com/DevYatsu/ysc" class="github">GitHub</a>
+</nav>
+
+<section class="hero">
+  <h1><span>y</span>sc</h1>
+  <p>A lightweight scripting language with a register-based VM, NaN-boxed values, closures, and async/await — no try/catch, no semicolons, no nonsense.</p>
+  <a href="guide.html" class="btn primary">Get Started</a>
+  <a href="playground.html" class="btn secondary">Try Online</a>
+</section>
+
+<div class="container">
+
+<div class="cards">
+  <a href="guide.html" class="card">
+    <h3><span class="icon">📘</span>Language Guide</h3>
+    <p>Functions, closures, control flow, modules, error handling, and async/await.</p>
+  </a>
+  <a href="stdlib.html" class="card">
+    <h3><span class="icon">📚</span>Standard Library</h3>
+    <p>print, str, len, time, sleep, fetch, and built-in string/list/object methods.</p>
+  </a>
+  <a href="playground.html" class="card">
+    <h3><span class="icon">▶</span>Playground</h3>
+    <p>Run ysc in the browser with syntax highlighting, AST viewer, and bytecode disassembler.</p>
+  </a>
+  <a href="https://github.com/DevYatsu/ysc" class="card">
+    <h3><span class="icon">⚙️</span>GitHub</h3>
+    <p>Source code, issues, and contributing — built in Rust, compiled to WASM.</p>
+  </a>
+</div>
+
+<h2 style="margin-top:3rem;">Quick Example</h2>
+<pre><span class="kw">fun</span> <span class="fn">fib</span>(n) {
+  <span class="kw">if</span> n < 2 {
+    <span class="kw">ret</span> n
+  } <span class="kw">else</span> {
+    <span class="kw">ret</span> <span class="fn">fib</span>(n - 1) + <span class="fn">fib</span>(n - 2)
+  }
+}
+
+<span class="fn">print</span>(<span class="str">"fib(10) = "</span> + <span class="fn">fib</span>(10))
+</pre>
+
+</div>
+
+<footer>
+  ysc — MIT license. Built with Rust.
+</footer>
+
+</body>
+</html>

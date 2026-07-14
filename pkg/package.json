@@ -1,0 +1,29 @@
+{
+  "name": "ys-wasm",
+  "type": "module",
+  "description": "ysc language interpreter for the browser — eval, AST, and bytecode via WASM",
+  "version": "0.1.0",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/DevYatsu/ysc"
+  },
+  "files": [
+    "ys_wasm_bg.wasm",
+    "ys_wasm.js",
+    "ys_wasm.d.ts"
+  ],
+  "main": "ys_wasm.js",
+  "homepage": "https://github.com/DevYatsu/ysc",
+  "types": "ys_wasm.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ],
+  "keywords": [
+    "yatsuscript",
+    "scripting",
+    "language",
+    "wasm",
+    "interpreter"
+  ]
+}

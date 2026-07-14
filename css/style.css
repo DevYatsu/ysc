@@ -1,0 +1,106 @@
+:root {
+  --bg: #1e1e2e;
+  --bg2: #2d2d44;
+  --bg3: #363650;
+  --fg: #e0e0e0;
+  --fg2: #a0a0b0;
+  --accent: #569cd6;
+  --green: #6a9955;
+  --orange: #ce9178;
+  --pink: #c586c0;
+  --yellow: #dcdcaa;
+  --line: #3a3a50;
+  --font: 'Inter', -apple-system, system-ui, sans-serif;
+  --mono: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', Consolas, monospace;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: var(--bg); color: var(--fg); font-family: var(--font); line-height: 1.7; }
+
+/* ── Navbar ─── */
+nav {
+  position: sticky; top: 0; z-index: 100;
+  background: var(--bg2); border-bottom: 1px solid var(--line);
+  padding: 0 2rem; display: flex; align-items: center; gap: 2rem;
+  height: 56px;
+}
+nav .logo { font-size: 1.3rem; font-weight: 700; color: var(--accent); text-decoration: none; }
+nav .logo span { color: var(--fg); }
+nav a { color: var(--fg2); text-decoration: none; font-size: 0.9rem; }
+nav a:hover { color: var(--fg); }
+nav a.active { color: var(--accent); border-bottom: 2px solid var(--accent); padding-bottom: 2px; }
+nav .github { margin-left: auto; }
+
+/* ── Layout ─── */
+.container { max-width: 960px; margin: 0 auto; padding: 2rem; }
+
+/* ── Hero ─── */
+.hero { text-align: center; padding: 5rem 1rem 3rem; }
+.hero h1 { font-size: 3.5rem; font-weight: 800; }
+.hero h1 span { color: var(--accent); }
+.hero p { font-size: 1.2rem; color: var(--fg2); max-width: 600px; margin: 1rem auto; }
+.hero .btn {
+  display: inline-block; margin: 0.5rem; padding: 0.75rem 2rem;
+  border-radius: 6px; text-decoration: none; font-weight: 600;
+  font-size: 1rem; transition: background 0.2s;
+}
+.hero .btn.primary { background: var(--accent); color: #fff; }
+.hero .btn.primary:hover { background: #4a8cd6; }
+.hero .btn.secondary { background: var(--bg3); color: var(--fg); }
+.hero .btn.secondary:hover { background: var(--line); }
+
+/* ── Cards ─── */
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1.5rem; margin: 3rem 0; }
+.card {
+  background: var(--bg2); border: 1px solid var(--line); border-radius: 8px;
+  padding: 1.5rem; text-decoration: none; color: inherit;
+  transition: border-color 0.2s, transform 0.2s;
+}
+.card:hover { border-color: var(--accent); transform: translateY(-2px); }
+.card h3 { font-size: 1.1rem; margin-bottom: 0.5rem; }
+.card h3 .icon { margin-right: 0.5rem; }
+.card p { font-size: 0.9rem; color: var(--fg2); }
+
+/* ── Content ─── */
+.content h1 { font-size: 2rem; margin: 2rem 0 1rem; }
+.content h2 { font-size: 1.4rem; margin: 2rem 0 1rem; color: var(--accent); }
+.content h3 { font-size: 1.1rem; margin: 1.5rem 0 0.5rem; }
+.content p { margin: 1rem 0; color: var(--fg2); }
+.content ul { margin: 1rem 0; padding-left: 1.5rem; color: var(--fg2); }
+.content li { margin: 0.3rem 0; }
+.content code {
+  background: var(--bg3); padding: 0.2em 0.4em; border-radius: 3px;
+  font-family: var(--mono); font-size: 0.9em; color: var(--orange);
+}
+.content pre {
+  background: var(--bg3); border: 1px solid var(--line); border-radius: 6px;
+  padding: 1rem; margin: 1rem 0; overflow-x: auto;
+  font-family: var(--mono); font-size: 0.85rem; line-height: 1.5;
+}
+.content pre code { background: none; padding: 0; color: var(--fg); }
+.content table { width: 100%; border-collapse: collapse; margin: 1rem 0; }
+.content th, .content td { padding: 0.5rem 1rem; text-align: left; border-bottom: 1px solid var(--line); }
+.content th { color: var(--accent); font-weight: 600; }
+.content td { color: var(--fg2); }
+.content blockquote {
+  border-left: 3px solid var(--accent); padding: 0.5rem 1rem;
+  margin: 1rem 0; background: var(--bg3); border-radius: 0 6px 6px 0;
+}
+.content blockquote p { margin: 0; }
+
+/* ── Syntax highlight colors for <pre> ─── */
+.kw { color: var(--pink); }
+.str { color: var(--orange); }
+.num { color: var(--green); }
+.cm { color: #6a737d; font-style: italic; }
+.fn { color: var(--yellow); }
+
+/* ── Footer ─── */
+footer { text-align: center; padding: 2rem; color: var(--fg2); font-size: 0.85rem; border-top: 1px solid var(--line); margin-top: 3rem; }
+
+/* ── Responsive ─── */
+@media (max-width: 640px) {
+  nav { padding: 0 1rem; gap: 1rem; }
+  .hero h1 { font-size: 2.2rem; }
+  .container { padding: 1rem; }
+}

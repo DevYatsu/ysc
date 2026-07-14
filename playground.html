@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Playground — ysc</title>
+<link rel="stylesheet" href="css/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='28' font-size='28'>⬡</text></svg>">
+<style>
+  .play-wrap { display: flex; gap: 1rem; height: 70vh; margin: 1rem 0; }
+  .play-editor { flex: 1; display: flex; flex-direction: column; }
+  .play-out { width: 340px; display: flex; flex-direction: column; background: var(--bg3); border-radius: 6px; }
+  .play-out pre { flex: 1; margin: 0; padding: 1rem; font-size: 13px; overflow: auto; white-space: pre-wrap; }
+  .play-bar { display: flex; gap: 0.5rem; padding: 0.5rem; background: var(--bg2); border-radius: 6px 6px 0 0; border-bottom: 1px solid var(--line); }
+  .play-bar button { padding: 4px 14px; font-size: 13px; border: none; border-radius: 4px; cursor: pointer; background: var(--accent); color: #fff; font-weight: 600; }
+  .play-bar button:hover { opacity: 0.9; }
+  .play-bar button:disabled { opacity: 0.4; cursor: not-allowed; }
+  .play-bar .status { font-size: 12px; color: var(--fg2); margin-left: auto; align-self: center; }
+  .play-out .tabs { display: flex; background: var(--bg2); border-bottom: 1px solid var(--line); }
+  .play-out .tabs span { padding: 6px 14px; font-size: 12px; cursor: pointer; color: var(--fg2); border-bottom: 2px solid transparent; }
+  .play-out .tabs span.active { color: var(--fg); border-bottom-color: var(--accent); }
+  .line-ref { color: var(--green); font-size: 11px; }
+  .error-text { color: #f48771; }
+  textarea { flex: 1; background: var(--bg); color: var(--fg); border: none; padding: 1rem; font-family: var(--mono); font-size: 14px; resize: none; outline: none; }
+  @media (max-width: 700px) { .play-wrap { flex-direction: column; height: auto; } .play-out { width: 100%; height: 300px; } }
+</style>
+</head>
+<body>
+
+<nav>
+  <a href="index.html" class="logo"><span>y</span>sc</a>
+  <a href="guide.html">Guide</a>
+  <a href="stdlib.html">Stdlib</a>
+  <a href="playground.html" class="active">Playground</a>
+  <a href="https://github.com/DevYatsu/ysc" class="github">GitHub</a>
+</nav>
+
+<div class="container">
+
+<h2 style="margin: 1rem 0;">Playground</h2>
+<p style="color:var(--fg2);">Edit code and press <strong>Run</strong> or <strong>Ctrl+Enter</strong>. Switch between Output, AST, and Bytecode tabs.</p>
+
+<div class="play-wrap">
+  <div class="play-editor">
+    <div class="play-bar">
+      <button id="runBtn" disabled>▶ Run</button>
+      <button id="resetBtn">↺ Reset</button>
+      <span class="status" id="status">Loading…</span>
+    </div>
+    <textarea id="source" spellcheck="false"></textarea>
+  </div>
+  <div class="play-out">
+    <div class="tabs">
+      <span id="tabOut" class="active">Output</span>
+      <span id="tabAst">AST</span>
+      <span id="tabBc">Bytecode</span>
+    </div>
+    <pre id="output">Welcome to ysc!
+
+Write code and press ▶ Run.</pre>
+  </div>
+</div>
+
+</div>
+
+<footer>ysc — MIT license. Built with Rust.</footer>
+
+<script type="module">
+const $src = document.getElementById('source');
+const $out = document.getElementById('output');
+const $runBtn = document.getElementById('runBtn');
+const $resetBtn = document.getElementById('resetBtn');
+const $status = document.getElementById('status');
+const $tabOut = document.getElementById('tabOut');
+const $tabAst = document.getElementById('tabAst');
+const $tabBc = document.getElementById('tabBc');
+
+const DEFAULT = `// ysc — interactive demo
+
+fun fib(n) {
+  if n < 2 { ret n }
+  else { ret fib(n - 1) + fib(n - 2) }
+}
+
+print("fib(10) = " + fib(10))
+
+// Object iteration
+obj = {name: "Alice", age: 30, city: "Paris"}
+for k in obj {
+  print(k + ": " + str(obj[k]))
+}
+
+// Range iteration
+sum = 0
+for i in 0..10 {
+  sum = sum + i
+}
+print("sum 0..9 = " + sum)
+`;
+
+$src.value = DEFAULT;
+let wasm, currentTab = 'output';
+
+function showTab(tab) {
+  currentTab = tab;
+  [$tabOut, $tabAst, $tabBc].forEach(t => t.classList.remove('active'));
+  if (tab === 'output') $tabOut.classList.add('active');
+  if (tab === 'ast') $tabAst.classList.add('active');
+  if (tab === 'bytecode') $tabBc.classList.add('active');
+}
+
+$tabOut.onclick = () => { showTab('output'); refresh(); };
+$tabAst.onclick = () => { showTab('ast'); refresh(); };
+$tabBc.onclick = () => { showTab('bytecode'); refresh(); };
+
+function refresh() {
+  if (!wasm) return;
+  const src = $src.value;
+  try {
+    if (currentTab === 'output') runCode(src);
+    else if (currentTab === 'ast') showAst(src);
+    else showBytecode(src);
+  } catch (e) {
+    $out.textContent = 'Error: ' + e.message;
+  }
+}
+
+function escape(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+function formatLine(l) {
+  const val = escape(l.value || '');
+  if (l.line !== undefined) {
+    return `<span class="line-ref">[l.${l.line}]</span> ${val}`;
+  }
+  return val;
+}
+
+function runCode(src) {
+  const r = wasm._eval(src);
+  if (r.success) {
+    const lines = r.lines || [];
+    $out.innerHTML = lines.length ? lines.map(formatLine).join('\n') : '';
+  } else {
+    let html = '';
+    (r.lines || []).forEach(l => { html += formatLine(l) + '\n'; });
+    html += '<span class="error-text">' + escape(r.error || 'Error') + '</span>';
+    $out.innerHTML = html;
+  }
+}
+
+function showAst(src) {
+  const r = wasm._parseAst(src);
+  if (r.success) {
+    $out.textContent = JSON.stringify(r.data, null, 2);
+  } else {
+    $out.innerHTML = '<span class="error-text">' + escape(r.error || 'Error') + '</span>';
+  }
+}
+
+function showBytecode(src) {
+  const r = wasm._disassemble(src);
+  if (r.success) {
+    let text = '';
+    (r.functions || []).forEach(fn => {
+      text += `--- fn ${fn.index}: ${fn.name} (p=${fn.params}, l=${fn.locals}) ---\n`;
+      (fn.instructions || []).forEach((ins, i) => {
+        text += `  ${String(i).padStart(4)}: ${ins}\n`;
+      });
+      text += '\n';
+    });
+    text += '--- main ---\n';
+    (r.main || []).forEach((ins, i) => {
+      text += `  ${String(i).padStart(4)}: ${ins}\n`;
+    });
+    $out.textContent = text;
+  } else {
+    $out.innerHTML = '<span class="error-text">' + escape(r.error || 'Error') + '</span>';
+  }
+}
+
+(async () => {
+  try {
+    const m = await import('../ys-wasm/pkg/ys_wasm.js');
+    await m.default();
+    wasm = m;
+    $status.textContent = 'Ready';
+    $runBtn.disabled = false;
+  } catch (e) {
+    $status.textContent = 'WASM unavailable';
+    $out.innerHTML = '<span class="error-text">WASM module not loaded. Run locally or check browser compatibility.\n\n' + escape(e.message) + '</span>';
+  }
+})();
+
+$runBtn.onclick = () => { showTab('output'); runCode($src.value); };
+$resetBtn.onclick = () => { $src.value = DEFAULT; refresh(); };
+document.addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+    e.preventDefault(); $runBtn.click();
+  }
+});
+</script>
+</body>
+</html>

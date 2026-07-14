@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Standard Library — ysc</title>
+<link rel="stylesheet" href="css/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='28' font-size='28'>⬡</text></svg>">
+</head>
+<body>
+
+<nav>
+  <a href="index.html" class="logo"><span>y</span>sc</a>
+  <a href="guide.html">Guide</a>
+  <a href="stdlib.html" class="active">Stdlib</a>
+  <a href="playground.html">Playground</a>
+  <a href="https://github.com/DevYatsu/ysc" class="github">GitHub</a>
+</nav>
+
+<div class="container content">
+
+<h1>Standard Library</h1>
+
+<h2>Built-in Functions</h2>
+
+<table>
+<tr><th>Function</th><th>Description</th><th>Example</th></tr>
+<tr>
+  <td><code>print(...)</code></td>
+  <td>Output values to stdout, separated by spaces</td>
+  <td><code>print("hello", 42)</code></td>
+</tr>
+<tr>
+  <td><code>str(val)</code></td>
+  <td>Convert any value to its string representation</td>
+  <td><code>str(42) → "42"</code></td>
+</tr>
+<tr>
+  <td><code>len(val)</code></td>
+  <td>Length of string, list, or object</td>
+  <td><code>len("hi") → 2</code></td>
+</tr>
+<tr>
+  <td><code>time()</code></td>
+  <td>Current Unix timestamp in seconds (float)</td>
+  <td><code>t = time()</code></td>
+</tr>
+<tr>
+  <td><code>sleep(ms)</code></td>
+  <td>Pause execution (returns a Promise)</td>
+  <td><code>await sleep(1000)</code></td>
+</tr>
+<tr>
+  <td><code>fetch(url)</code></td>
+  <td>HTTP GET request (returns a Promise, async)</td>
+  <td><code>body = await fetch(url)</code></td>
+</tr>
+<tr>
+  <td><code>spawn(fn, ...)</code></td>
+  <td>Spawn a function call on the event loop</td>
+  <td><code>p = spawn("fun", 1, 2)</code></td>
+</tr>
+</table>
+
+<h2>String Methods</h2>
+<table>
+<tr><th>Method</th><th>Returns</th><th>Description</th></tr>
+<tr><td><code>.len()</code></td><td>number</td><td>Length of the string</td></tr>
+<tr><td><code>.upper()</code></td><td>string</td><td>Uppercase conversion</td></tr>
+<tr><td><code>.lower()</code></td><td>string</td><td>Lowercase conversion</td></tr>
+<tr><td><code>.trim()</code></td><td>string</td><td>Trim whitespace from both ends</td></tr>
+<tr><td><code>.starts_with(s)</code></td><td>bool</td><td>Check prefix</td></tr>
+<tr><td><code>.ends_with(s)</code></td><td>bool</td><td>Check suffix</td></tr>
+<tr><td><code>.contains(s)</code></td><td>bool</td><td>Check substring</td></tr>
+<tr><td><code>.replace(from, to)</code></td><td>string</td><td>Replace all occurrences</td></tr>
+<tr><td><code>.split(delim)</code></td><td>list</td><td>Split into list of strings</td></tr>
+<tr><td><code>.repeat(n)</code></td><td>string</td><td>Repeat the string n times</td></tr>
+<tr><td><code>.slice(start, end)</code></td><td>string</td><td>Extract substring</td></tr>
+<tr><td><code>.index_of(s)</code></td><td>number</td><td>Find first occurrence (or -1)</td></tr>
+<tr><td><code>.to_number()</code></td><td>number</td><td>Parse as float (0 on failure)</td></tr>
+<tr><td><code>.is_empty()</code></td><td>bool</td><td>Check if empty string</td></tr>
+<tr><td><code>.chars()</code></td><td>list</td><td>Split into list of character strings</td></tr>
+</table>
+
+<h2>Number Methods</h2>
+<table>
+<tr><th>Method</th><th>Returns</th><th>Description</th></tr>
+<tr><td><code>.to_string()</code></td><td>string</td><td>Format number as string</td></tr>
+<tr><td><code>.ceil()</code></td><td>number</td><td>Round up</td></tr>
+<tr><td><code>.floor()</code></td><td>number</td><td>Round down</td></tr>
+<tr><td><code>.round()</code></td><td>number</td><td>Round to nearest integer</td></tr>
+<tr><td><code>.abs()</code></td><td>number</td><td>Absolute value</td></tr>
+<tr><td><code>.sqrt()</code></td><td>number</td><td>Square root</td></tr>
+<tr><td><code>.pow(n)</code></td><td>number</td><td>Raise to power n</td></tr>
+<tr><td><code>.is_integer()</code></td><td>bool</td><td>Check if integer value</td></tr>
+<tr><td><code>.to_int()</code></td><td>number</td><td>Truncate fractional part</td></tr>
+</table>
+
+<h2>Object Methods</h2>
+<table>
+<tr><th>Method</th><th>Returns</th><th>Description</th></tr>
+<tr><td><code>.keys()</code></td><td>list</td><td>List of field names</td></tr>
+<tr><td><code>.values()</code></td><td>list</td><td>List of field values</td></tr>
+<tr><td><code>.entries()</code></td><td>list</td><td>List of [key, value] pairs</td></tr>
+<tr><td><code>.has(key)</code></td><td>bool</td><td>Check if field exists</td></tr>
+<tr><td><code>.len()</code></td><td>number</td><td>Number of fields</td></tr>
+</table>
+
+<h2>List Methods</h2>
+<table>
+<tr><th>Method</th><th>Returns</th><th>Description</th></tr>
+<tr><td><code>.map(fn)</code></td><td>list</td><td>Transform each element</td></tr>
+<tr><td><code>.filter(fn)</code></td><td>list</td><td>Keep elements matching predicate</td></tr>
+<tr><td><code>.reduce(init, fn)</code></td><td>any</td><td>Accumulate over elements</td></tr>
+<tr><td><code>.each(fn)</code></td><td>self</td><td>Side-effect iteration</td></tr>
+<tr><td><code>.find(fn)</code></td><td>any</td><td>First matching element</td></tr>
+<tr><td><code>.some(fn)</code></td><td>bool</td><td>Any element matches?</td></tr>
+<tr><td><code>.every(fn)</code></td><td>bool</td><td>All elements match?</td></tr>
+<tr><td><code>.includes(val)</code></td><td>bool</td><td>Value in list?</td></tr>
+<tr><td><code>.index_of(val)</code></td><td>number</td><td>Find position (or -1)</td></tr>
+<tr><td><code>.sorted()</code></td><td>list</td><td>Numeric sort</td></tr>
+<tr><td><code>.reversed()</code></td><td>list</td><td>Reverse order</td></tr>
+<tr><td><code>.slice(start, end)</code></td><td>list</td><td>Extract sublist</td></tr>
+<tr><td><code>.concat(list)</code></td><td>list</td><td>Append another list</td></tr>
+<tr><td><code>.flatten()</code></td><td>list</td><td>Flatten nested lists one level</td></tr>
+<tr><td><code>.take(n)</code></td><td>list</td><td>First n elements</td></tr>
+<tr><td><code>.drop(n)</code></td><td>list</td><td>Drop first n elements</td></tr>
+<tr><td><code>.unique()</code></td><td>list</td><td>Deduplicate adjacent equal values</td></tr>
+</table>
+
+<h2>Operators</h2>
+<table>
+<tr><th>Operator</th><th>Description</th></tr>
+<tr><td><code>+ - * / %</code></td><td>Arithmetic (string + supports number coercion)</td></tr>
+<tr><td><code>+= -= *= /= %=</code></td><td>Compound assignment</td></tr>
+<tr><td><code>== != &lt; &lt;= &gt; &gt;=</code></td><td>Comparison</td></tr>
+<tr><td><code>and / or / not</code></td><td>Boolean logic (short-circuit)</td></tr>
+<tr><td><code>..</code></td><td>Range</td></tr>
+<tr><td><code>.</code></td><td>Field access / method call</td></tr>
+<tr><td><code>or</code></td><td>Failure fallback (catch failures)</td></tr>
+<tr><td><code>except { ... }</code></td><td>Failure pattern matching</td></tr>
+</table>
+
+</div>
+
+<footer>
+  ysc — MIT license. Built with Rust.
+</footer>
+
+</body>
+</html>
