@@ -91,7 +91,7 @@ impl<'source> TokenStream<'source> {
         } else {
             let loc = self.loc();
             Err(JitError::parsing(
-                "Unexpected EOF".to_string(),
+                "Unexpected EOF",
                 loc.line as usize,
                 loc.col as usize,
             ))

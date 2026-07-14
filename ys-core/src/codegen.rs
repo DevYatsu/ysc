@@ -5,13 +5,13 @@
 //! original single-pass parser in [`parser.rs`].
 
 use std::sync::Arc;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::ast::*;
 use crate::compiler::*;
 use crate::error::JitError;
 
-// ── Variable tracking ─────────────────────────────────────────────────────────
+//  Variable tracking
 
 #[derive(Debug, Clone, Copy)]
 struct VarInfo {
@@ -19,7 +19,7 @@ struct VarInfo {
     is_global: bool,
 }
 
-// ── Codegen ───────────────────────────────────────────────────────────────────
+//  Codegen
 
 pub struct Codegen {
     /// Local variables per function: name → register / global info.
@@ -41,6 +41,13 @@ pub struct Codegen {
     string_map:   FxHashMap<Arc<str>, u32>,
 
     is_in_function: bool,
+
+    /// Set of declared error kind full paths — for duplicate detection.
+    declared_errors: FxHashSet<String>,
+    /// Error kind of the function currently being compiled (None = no ! annotation).
+    current_error_kind: Option<String>,
+    /// All fail full-paths seen in the current function body.
+    current_fail_kinds: Vec<String>,
 }
 
 impl Codegen {
@@ -56,10 +63,13 @@ impl Codegen {
             string_pool:   Vec::new(),
             string_map:    FxHashMap::default(),
             is_in_function: false,
+            declared_errors: FxHashSet::default(),
+            current_error_kind: None,
+            current_fail_kinds: Vec::new(),
         }
     }
 
-    // ── Helpers ─────────────────────────────────────────────────────────────
+    //  Helpers
 
     fn alloc_reg(&mut self) -> usize {
         let r = self.next_reg;
@@ -114,7 +124,7 @@ impl Codegen {
         }
     }
 
-    // ── Compile a complete program ──────────────────────────────────────────
+    //  Compile a complete program
 
     /// Parse, optimise, and compile source code into a [`Program`].
     pub fn compile(source: &str) -> Result<Program, JitError> {
@@ -144,7 +154,7 @@ impl Codegen {
         })
     }
 
-    // ── Block ───────────────────────────────────────────────────────────────
+    //  Block
 
     fn compile_block(&mut self, block: &[AstNode]) -> Result<(), JitError> {
         for node in block {
@@ -153,11 +163,11 @@ impl Codegen {
         Ok(())
     }
 
-    // ── Node dispatch ───────────────────────────────────────────────────────
+    //  Node dispatch
 
     fn compile_node(&mut self, node: &AstNode) -> Result<usize, JitError> {
         match node {
-            // ── Literals ────────────────────────────────────────────────────
+            //  Literals
             AstNode::Number(n, _) => {
                 let dst = self.alloc_reg();
                 self.emit(Instruction::LoadLiteral { dst, val: Value::number(*n) });
@@ -184,7 +194,7 @@ impl Codegen {
                 self.compile_template(parts, *loc)
             }
 
-            // ── Variables ────────────────────────────────────────────────────
+            //  Variables
             AstNode::Ident(name, _) => {
                 if let Some(info) = self.get_var(name) {
                     Ok(self.load_var(info))
@@ -198,12 +208,12 @@ impl Codegen {
                 }
             }
 
-            // ── Assignment ────────────────────────────────────────────────────
+            //  Assignment
             AstNode::Assign { target, value, loc } => {
                 self.compile_assign(target, value, *loc)
             }
 
-            // ── Binary ops ────────────────────────────────────────────────────
+            //  Binary ops
             AstNode::Binary { op, lhs, rhs, loc } => {
                 let l = self.compile_node(lhs)?;
                 let r = self.compile_node(rhs)?;
@@ -228,16 +238,13 @@ impl Codegen {
                 Ok(dst)
             }
 
-            // ── Unary ops ────────────────────────────────────────────────────
+            //  Unary ops
             AstNode::Unary { op, expr, loc } => {
                 let src = self.compile_node(expr)?;
                 match op {
                     UnaryOp::Neg => {
                         let dst = self.alloc_reg();
-                        self.emit(Instruction::LoadLiteral {
-                            dst, val: Value::number(-1.0),
-                        });
-                        self.emit(Instruction::Mul { dst, lhs: src, rhs: dst, loc: *loc });
+                        self.emit(Instruction::Neg { dst, src, loc: *loc });
                         Ok(dst)
                     }
                     UnaryOp::Not => {
@@ -248,7 +255,7 @@ impl Codegen {
                 }
             }
 
-            // ── Control flow ──────────────────────────────────────────────────
+            //  Control flow
             AstNode::Block(stmts, _) => {
                 self.compile_block(stmts)?;
                 Ok(0)
@@ -271,7 +278,7 @@ impl Codegen {
                 Ok(0)
             }
 
-            // ── Switch ──────────────────────────────────────────────────────
+            //  Switch
             AstNode::Switch { expr, arms, .. } => {
                 let val_reg = self.compile_node(expr)?;
                 let mut fail_jumps: Vec<(usize, usize)> = Vec::new();  // pattern mismatches
@@ -318,7 +325,7 @@ impl Codegen {
                 self.emit(Instruction::Jump(0));
                 Ok(0)
             }
-            // ── Async / Await (stub) ─────────────────────────────────────────
+            //  Async / Await (stub)
             AstNode::AsyncFun { name, params, body, loc } => {
                 // For now, treat async fun as a regular fun (synchronous fallback)
                 self.compile_func(name, params, body, *loc);
@@ -331,7 +338,7 @@ impl Codegen {
                 Ok(dst)
             }
 
-            // ── Calls ────────────────────────────────────────────────────────
+            //  Calls
             AstNode::FunCall { name, args, loc } => {
                 self.compile_fun_call(name, args, *loc)
             }
@@ -374,16 +381,43 @@ impl Codegen {
                 Ok(dst)
             }
 
-            // ── Functions & closures ──────────────────────────────────────────
-            AstNode::FunDecl { name, params, body, exported: _, loc } => {
+            //  Functions & closures
+            AstNode::FunDecl { name, params, body, exported: _, loc, error_kind } => {
+                // Save outer state
+                let old_error_kind = self.current_error_kind.take();
+                let old_fail_kinds = std::mem::take(&mut self.current_fail_kinds);
+
+                self.current_error_kind = error_kind.clone();
+
+                // Compile the function body
                 self.compile_func(name, params, body, *loc);
+
+                // Infer error kind from collected fail calls
+                if !self.current_fail_kinds.is_empty() {
+                    let first = &self.current_fail_kinds[0];
+                    let base = first.split('.').next().unwrap_or(first);
+                    for path in &self.current_fail_kinds {
+                        let b = path.split('.').next().unwrap_or(path);
+                        if b != base {
+                            return Err(JitError::parsing(
+                                format!("Function '{}' mixes error kinds '{}' and '{}'", name, base, b),
+                                loc.line as usize, loc.col as usize,
+                            ));
+                        }
+                    }
+                }
+
+                // Restore outer state
+                self.current_error_kind = old_error_kind;
+                self.current_fail_kinds = old_fail_kinds;
+
                 Ok(0)
             }
             AstNode::Closure { params, body, is_move: _, loc } => {
                 self.compile_closure(params, body, *loc)
             }
 
-            // ── Collections ──────────────────────────────────────────────────
+            //  Collections
             AstNode::ListLit(elems, _) => {
                 let dst = self.alloc_reg();
                 if elems.is_empty() {
@@ -394,7 +428,7 @@ impl Codegen {
                 }
                 Ok(dst)
             }
-            AstNode::ListRepeat { val, count, loc } => {
+            AstNode::ListRepeat { val, count, loc: _ } => {
                 let val_r = self.compile_node(val)?;
                 let count_r = self.compile_node(count)?;
                 let dst = self.alloc_reg();
@@ -431,7 +465,7 @@ impl Codegen {
                 Ok(dst)
             }
 
-            // ── Ranges ──────────────────────────────────────────────────────
+            //  Ranges
             AstNode::Range { start, end, step, loc } => {
                 let start_r = self.compile_node(start)?;
                 let end_r = self.compile_node(end)?;
@@ -441,17 +475,146 @@ impl Codegen {
                 Ok(dst)
             }
 
-            // ── Misc ────────────────────────────────────────────────────────
+            //  Failure handling
+            AstNode::Fail { type_name, loc: _ } => {
+                let dst = self.alloc_reg();
+                // Resolve short-form: if no dot and current_error_kind is set, prepend kind
+                let full_name = if type_name.contains('.') {
+                    type_name.clone()
+                } else if let Some(ref kind) = self.current_error_kind {
+                    format!("{}.{}", kind, type_name)
+                } else {
+                    type_name.clone()
+                };
+
+                self.current_fail_kinds.push(full_name.clone());
+
+                let name_id = self.intern(&full_name);
+                self.emit(Instruction::Fail { dst, name_id });
+                Ok(dst)
+            }
+            AstNode::Fallback { expr, default, loc: _ } => {
+                let left_r = self.compile_node(expr)?;
+                let dst = self.alloc_reg();
+                self.emit(Instruction::Move { dst, src: left_r });
+                let jump_idx = self.instructions.len();
+                self.emit(Instruction::Jump(0)); // placeholder → JumpIfNotFail
+                let right_r = self.compile_node(default)?;
+                self.emit(Instruction::Move { dst, src: right_r });
+                let end = self.instructions.len();
+                self.instructions[jump_idx] = Instruction::JumpIfNotFail { src: left_r, target: end };
+                Ok(dst)
+            }
+            AstNode::Except { expr, arms, loc: _ } => {
+                let val_r = self.compile_node(expr)?;
+                let dst = self.alloc_reg();
+
+                // Move the value to dst (may be failure or normal value)
+                self.emit(Instruction::Move { dst, src: val_r });
+
+                // Jump to end if NOT a failure (success path)
+                let skip_idx = self.instructions.len();
+                self.emit(Instruction::Jump(0)); // placeholder → JumpIfNotFail
+
+                let mut end_jumps: Vec<usize> = Vec::new();
+                for arm in arms {
+                    if arm.type_name.is_empty() {
+                        // Default arm (_): execute body
+                        for stmt in &arm.body {
+                            self.compile_node(stmt)?;
+                        }
+                        // Body's last expression value should be in dst
+                        if let Some(last) = arm.body.last() {
+                            let last_r = self.compile_node(last)?;
+                            self.emit(Instruction::Move { dst, src: last_r });
+                        }
+                        let end_jump = self.instructions.len();
+                        self.emit(Instruction::Jump(0));
+                        end_jumps.push(end_jump);
+                    } else {
+                        // Named arm: check if failure matches this type
+                        let name_id = self.intern(&arm.type_name);
+                        // Compare the runtime failure value against a constructed failure literal
+                        let lit_r = self.alloc_reg();
+                        self.emit(Instruction::LoadLiteral { dst: lit_r, val: Value::failure(name_id) });
+                        let eq_r = self.alloc_reg();
+                        self.emit(Instruction::Eq { dst: eq_r, lhs: val_r, rhs: lit_r });
+                        let next_arm_idx = self.instructions.len();
+                        self.emit(Instruction::Jump(0)); // placeholder → JumpIfFalse to next arm
+                        for stmt in &arm.body {
+                            self.compile_node(stmt)?;
+                        }
+                        if let Some(last) = arm.body.last() {
+                            let last_r = self.compile_node(last)?;
+                            self.emit(Instruction::Move { dst, src: last_r });
+                        }
+                        let end_jump = self.instructions.len();
+                        self.emit(Instruction::Jump(0));
+                        end_jumps.push(end_jump);
+                        // Patch the JumpIfFalse to point here (next arm)
+                        let next_arm_pos = self.instructions.len();
+                        match &mut self.instructions[next_arm_idx] {
+                            Instruction::Jump(_) => {
+                                self.instructions[next_arm_idx] = Instruction::JumpIfFalse { cond: eq_r, target: next_arm_pos };
+                            }
+                            _ => unreachable!(),
+                        }
+                    }
+                }
+
+                // Patch skip_idx to JumpIfNotFail → end
+                let end_pos = self.instructions.len();
+                self.instructions[skip_idx] = Instruction::JumpIfNotFail { src: val_r, target: end_pos };
+
+                // Patch all end_jumps to → end_pos
+                for &j in &end_jumps {
+                    match &mut self.instructions[j] {
+                        Instruction::Jump(_) => {
+                            self.instructions[j] = Instruction::Jump(end_pos);
+                        }
+                        _ => unreachable!(),
+                    }
+                }
+
+                Ok(dst)
+            }
+
+            //  Error declarations
+            AstNode::ErrorDecl { name, loc } => {
+                if !self.declared_errors.insert(name.clone()) {
+                    return Err(JitError::parsing(
+                        format!("Duplicate error kind '{}'", name),
+                        loc.line as usize, loc.col as usize,
+                    ));
+                }
+                self.intern(name);
+                Ok(0)
+            }
+            AstNode::ErrorEnum { name, variants, loc } => {
+                for v in variants {
+                    let path = format!("{}.{}", name, v);
+                    if !self.declared_errors.insert(path.clone()) {
+                        return Err(JitError::parsing(
+                            format!("Duplicate error kind '{}'", path),
+                            loc.line as usize, loc.col as usize,
+                        ));
+                    }
+                    self.intern(&path);
+                }
+                Ok(0)
+            }
+
+            //  Misc
             _ => {
                 Err(JitError::parsing(
-                    "Unsupported AST node in codegen",
+                    "Internal compiler error: unsupported AST node in codegen",
                     0, 0,
                 ))
             }
         }
     }
 
-    // ── Assignment ──────────────────────────────────────────────────────────
+    //  Assignment
 
     fn compile_assign(&mut self, target: &AstNode, value: &AstNode, loc: Loc) -> Result<usize, JitError> {
         let src = self.compile_node(value)?;
@@ -512,46 +675,43 @@ impl Codegen {
         }
     }
 
-    // ── Short-circuit and/or ──────────────────────────────────────────────
+    //  Short-circuit and/or
 
-    fn compile_short_circuit(&mut self, op: BinOp, l: usize, r: usize, loc: Loc) -> Result<usize, JitError> {
+    fn compile_short_circuit(&mut self, op: BinOp, l: usize, r: usize, _loc: Loc) -> Result<usize, JitError> {
         let dst = self.alloc_reg();
-        self.emit(Instruction::Move { dst, src: l });
-        let jump_idx = self.instructions.len();
-        self.emit(Instruction::Jump(0)); // placeholder
-        self.emit(Instruction::Move { dst, src: r });
-        let end = self.instructions.len();
-        if op == BinOp::And {
-            // Jump if lhs is falsy (skip rhs)
-            self.instructions[jump_idx] = Instruction::JumpIfFalse { cond: l, target: end };
-        } else {
-            // Jump if lhs is truthy (skip rhs — short-circuit for Or)
-            // We need: if l is truthy, jump to end (result = l)
-            // if l is falsy, fall through to r
-            // Actually for NOT: we want to jump if l is TRUTHY (short-circuit)
-            // For AND: jump if l is FALSY
-            // For OR: jump if l is TRUTHY
-            // So for OR: we need "JumpIfTrue" but we only have JumpIfFalse.
-            // Desugar: JumpIfFalse(not_l, ...) → actually we jump if l is falsy
-            // to evaluate r. If l is truthy, we want to skip r.
-            // Structure: Move dst, l; JumpIfFalsy l, eval_r; Jump(end); eval_r: Move dst, r; end:
-            // But we don't have JumpIfTruthy.
-            // Simpler: load true, Eq l, true, JumpIfFalse eq, end
-            let t = self.alloc_reg();
-            self.emit(Instruction::LoadLiteral { dst: t, val: Value::bool(true) });
-            let eq = self.alloc_reg();
-            self.emit(Instruction::Eq { dst: eq, lhs: l, rhs: t });
-            // Re-patch: the placeholder was at jump_idx, we've emitted more since
-            // Let me restructure... Actually this is getting complex.
-            // For now, treat OR like AND (conservative but works)
-            self.instructions[jump_idx] = Instruction::JumpIfFalse { cond: l, target: end };
+        match op {
+            BinOp::And => {
+                // a && b: if a is falsy → short-circuit (result = a), else evaluate b
+                self.emit(Instruction::Move { dst, src: l });
+                let jump_idx = self.instructions.len();
+                self.emit(Instruction::Jump(0)); // placeholder
+                self.emit(Instruction::Move { dst, src: r });
+                let end = self.instructions.len();
+                self.instructions[jump_idx] = Instruction::JumpIfFalse { cond: l, target: end };
+            }
+            BinOp::Or => {
+                // a || b: if a is truthy → short-circuit (result = a), else evaluate b
+                // Only have JumpIfFalse, so invert: if l is falsy, evaluate r
+                self.emit(Instruction::Move { dst, src: l });
+                let jump_false_idx = self.instructions.len();
+                self.emit(Instruction::Jump(0)); // placeholder → JumpIfFalse to eval_r
+                let jump_end_idx = self.instructions.len();
+                self.emit(Instruction::Jump(0)); // placeholder → Jump(end) when truthy
+                let eval_r = self.instructions.len();
+                self.emit(Instruction::Move { dst, src: r });
+                let end = self.instructions.len();
+                self.instructions[jump_false_idx] =
+                    Instruction::JumpIfFalse { cond: l, target: eval_r };
+                self.instructions[jump_end_idx] = Instruction::Jump(end);
+            }
+            _ => unreachable!(),
         }
         Ok(dst)
     }
 
-    // ── If / else ──────────────────────────────────────────────────────────
+    //  If / else
 
-    fn compile_if(&mut self, cond: &AstNode, then_block: &[AstNode], else_block: &[AstNode], loc: Loc) -> Result<usize, JitError> {
+    fn compile_if(&mut self, cond: &AstNode, then_block: &[AstNode], else_block: &[AstNode], _loc: Loc) -> Result<usize, JitError> {
         let cond_r = self.compile_node(cond)?;
         let jump_idx = self.instructions.len();
         self.emit(Instruction::Jump(0)); // placeholder → JumpIfFalse
@@ -576,9 +736,9 @@ impl Codegen {
         Ok(0)
     }
 
-    // ── While loop ─────────────────────────────────────────────────────────
+    //  While loop
 
-    fn compile_while(&mut self, cond: &AstNode, body: &[AstNode], loc: Loc) -> Result<usize, JitError> {
+    fn compile_while(&mut self, cond: &AstNode, body: &[AstNode], _loc: Loc) -> Result<usize, JitError> {
         let loop_start = self.instructions.len();
         let cond_r = self.compile_node(cond)?;
         let jump_idx = self.instructions.len();
@@ -591,9 +751,9 @@ impl Codegen {
         Ok(0)
     }
 
-    // ── For loop ───────────────────────────────────────────────────────────
+    //  For loop
 
-    fn compile_for(&mut self, var: &str, iter: &AstNode, body: &[AstNode], loc: Loc) -> Result<usize, JitError> {
+    fn compile_for(&mut self, var: &str, iter: &AstNode, body: &[AstNode], _loc: Loc) -> Result<usize, JitError> {
         // Inline known Range nodes to avoid heap round-trip.
         let (start_reg, end_reg, step_reg) = if let AstNode::Range { start, end, step, .. } = iter {
             let s = self.compile_node(start)?;
@@ -635,7 +795,7 @@ impl Codegen {
         Ok(0)
     }
 
-    // ── Function calls ─────────────────────────────────────────────────────
+    //  Function calls
 
     fn compile_fun_call(&mut self, name: &str, args: &[AstNode], loc: Loc) -> Result<usize, JitError> {
         let args_r: Vec<usize> = args.iter()
@@ -667,9 +827,9 @@ impl Codegen {
         args.iter().map(|a| self.compile_node(a)).collect()
     }
 
-    // ── Function declaration ───────────────────────────────────────────────
+    //  Function declaration
 
-    fn compile_func(&mut self, name: &str, params: &[String], body: &[AstNode], loc: Loc) {
+    fn compile_func(&mut self, name: &str, params: &[String], body: &[AstNode], _loc: Loc) {
         // Save state — compile function body inline with the shared string pool.
         let old_locals = std::mem::take(&mut self.locals);
         let old_reg = self.next_reg;
@@ -707,9 +867,9 @@ impl Codegen {
         self.function_map.insert(name.to_string(), idx);
     }
 
-    // ── Closure ────────────────────────────────────────────────────────────
+    //  Closure
 
-    fn compile_closure(&mut self, params: &[String], body: &AstNode, loc: Loc) -> Result<usize, JitError> {
+    fn compile_closure(&mut self, params: &[String], body: &AstNode, _loc: Loc) -> Result<usize, JitError> {
         let mut func = Codegen::new();
         func.is_in_function = true;
         for (i, p) in params.iter().enumerate() {
@@ -741,7 +901,7 @@ impl Codegen {
         Ok(dst)
     }
 
-    // ── Template literals ─────────────────────────────────────────────────
+    //  Template literals
 
     fn compile_template(&mut self, parts: &[TemplatePart], loc: Loc) -> Result<usize, JitError> {
         let mut result: Option<usize> = None;

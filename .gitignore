@@ -1,1 +1,5 @@
 target/
+.slim/
+**/codemap.md
+docs/superpowers/
+AGENTS.md

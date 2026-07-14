@@ -83,12 +83,21 @@ pub enum Token<'source> {
     /// 'else' keyword.
     #[token("else")]
     Else,
+    /// 'error' keyword for declaring error kinds.
+    #[token("error")]
+    Error,
     /// 'exp' export visibility modifier.
     #[token("exp")]
     Exp,
+    /// 'except' keyword for failure pattern matching.
+    #[token("except")]
+    Except,
     /// 'for' loop keyword.
     #[token("for")]
     For,
+    /// 'fail' keyword for producing tagged failures.
+    #[token("fail")]
+    Fail,
     /// 'fun' function declaration keyword.
     #[token("fun")]
     Fun,

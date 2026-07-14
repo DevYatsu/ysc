@@ -40,10 +40,15 @@ pub fn stringify_value(ctx: &Context, val: Value) -> String {
         }
         return "null".into();
     }
+    if let Some(name_id) = val.as_failure_id() {
+        let name = ctx.string_pool.get(name_id as usize).map(|s| s.as_ref()).unwrap_or("?");
+        return format!("fail({})", name);
+    }
+
     "unknown".into()
 }
 
-// ── Private formatting helpers ────────────────────────────────────────────────
+//  Private formatting helpers
 
 fn format_number(n: f64) -> String {
     // Omit the trailing ".0" for whole numbers to match scripting conventions.

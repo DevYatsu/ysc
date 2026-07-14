@@ -14,7 +14,5 @@ ys-core      = { path = "../ys-core" }
 ys-runtime   = { path = "../ys-runtime" }
 clap         = { version = "4.5.31", features = ["derive"] }
 rustyline    = { version = "13.0.0", features = ["derive"] }
-rayon        = "1.11.0"
 colored      = "3.0.0"
 logos        = "0.16.1"
-thiserror    = "2.0.18"

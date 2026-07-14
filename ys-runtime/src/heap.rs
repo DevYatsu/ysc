@@ -24,7 +24,7 @@ use ys_core::compiler::Value;
 
 use crate::context::Context;
 
-// ── SyncCell: single-threaded interior mutability ─────────────────────────
+//  SyncCell: single-threaded interior mutability
 
 /// Interior-mutability cell for single-threaded contexts shared behind `Arc`.
 ///
@@ -44,7 +44,7 @@ impl<T> SyncCell<T> {
     pub fn get_mut(&self) -> &mut T { unsafe { &mut *self.0.get() } }
 }
 
-// ── Object variants ───────────────────────────────────────────────────────────
+//  Object variants
 
 /// A closure — a function bundled with its captured environment.
 /// Uses a name_id into the unified callables map (same as named calls).
@@ -109,6 +109,7 @@ impl ManagedObject {
                             f(id);
                         }
                     }
+                    crate::vm::PromiseState::Rejected(_) => {} // No heap children — name_id is a string-pool index
                     crate::vm::PromiseState::Pending { continuation } => {
                         if let Some(frame) = continuation {
                             for v in frame.registers.iter() {
@@ -127,7 +128,7 @@ impl ManagedObject {
     }
 }
 
-// ── Heap slot 
+//  Heap slot
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Generation { Nursery, Tenured }
@@ -139,7 +140,7 @@ pub struct HeapObject {
     pub generation: Generation,
 }
 
-// ── GC bookkeeping ───────────────────────────────────────────────────────────
+//  GC bookkeeping
 
 /// GC bookkeeping data.
 pub struct HeapMetadata {
@@ -148,7 +149,7 @@ pub struct HeapMetadata {
     pub remembered_set: FxHashSet<u32>,
 }
 
-// ── Heap ────
+//  Heap
 
 /// The managed object store with a generational GC.
 ///
@@ -198,21 +199,16 @@ impl Heap {
         meta.remembered_set.clear();
         meta.nursery_ids.clear();
 
-        let freed: Vec<u32> = objects
-            .iter_mut()
-            .enumerate()
-            .filter_map(|(i, slot)| {
-                if let Some(obj) = slot {
-                    if obj.last_gc_id != gc_id {
-                        *slot = None;
-                        return Some(i as u32);
-                    }
+        for (i, slot) in objects.iter_mut().enumerate() {
+            if let Some(obj) = slot {
+                if obj.last_gc_id != gc_id {
+                    *slot = None;
+                    meta.free_list.push(i as u32);
+                } else {
                     obj.generation = Generation::Tenured;
                 }
-                None
-            })
-            .collect();
-        meta.free_list.extend(freed);
+            }
+        }
     }
 
     /// Scan only nursery objects and objects in the remembered set.

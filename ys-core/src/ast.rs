@@ -7,7 +7,7 @@ use crate::compiler::Loc;
 
 pub type AstBlock = Vec<AstNode>;
 
-// ── Operators ─────────────────────────────────────────────────────────────────
+//  Operators
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum BinOp {
@@ -19,26 +19,26 @@ pub enum BinOp {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum UnaryOp { Neg, Not }
 
-// ── AST Node ─────────────────────────────────────────────────────────────────
+//  AST Node
 
 #[derive(Debug, Clone)]
 pub enum AstNode {
-    // ── Literals ─
+    //  Literals
     Number(f64, Loc),
     Bool(bool, Loc),
     Nil(Loc),
     Str(String, Loc),
     Template { parts: Vec<TemplatePart>, loc: Loc },
 
-    // ── Variables ─
+    //  Variables
     Ident(String, Loc),
     Assign { target: Box<AstNode>, value: Box<AstNode>, loc: Loc },
 
-    // ── Expressions ─
+    //  Expressions
     Binary { op: BinOp, lhs: Box<AstNode>, rhs: Box<AstNode>, loc: Loc },
     Unary  { op: UnaryOp, expr: Box<AstNode>, loc: Loc },
 
-    // ── Control flow ─
+    //  Control flow
     Block(AstBlock, Loc),
     If {
         cond:       Box<AstNode>,
@@ -50,7 +50,7 @@ pub enum AstNode {
     For   { var: String, iter: Box<AstNode>, body: AstBlock, loc: Loc },
     Return { value: Option<Box<AstNode>>, loc: Loc },
 
-    // ── Switch ─
+    //  Switch
     Switch {
         expr: Box<AstNode>,
         arms: Vec<SwitchArm>,
@@ -58,21 +58,25 @@ pub enum AstNode {
     },
     Break(Loc),
 
-    // ── Async / Await ─
+    //  Failure handling
+    Fail { type_name: String, loc: Loc },
+
+    //  Async / Await
     Await(Box<AstNode>, Loc),
 
-    // ── Calls ─
+    //  Calls
     FunCall { name: String, args: Vec<AstNode>, loc: Loc },
     MethodCall { obj: Box<AstNode>, method: String, args: Vec<AstNode>, loc: Loc },
     DynamicCall { callee: Box<AstNode>, args: Vec<AstNode>, loc: Loc },
 
-    // ── Functions / Closures ─
+    //  Functions / Closures
     FunDecl {
-        name:     String,
-        params:   Vec<String>,
-        body:     AstBlock,
-        exported: bool,
-        loc:      Loc,
+        name:       String,
+        params:     Vec<String>,
+        body:       AstBlock,
+        exported:   bool,
+        loc:        Loc,
+        error_kind: Option<String>,
     },
     /// Async function — returns a Promise.
     AsyncFun {
@@ -83,14 +87,14 @@ pub enum AstNode {
     },
     Closure { params: Vec<String>, body: Box<AstNode>, is_move: bool, loc: Loc },
 
-    // ── Collections ─
+    //  Collections
     ListLit(Vec<AstNode>, Loc),
     ListRepeat { val: Box<AstNode>, count: Box<AstNode>, loc: Loc },
     ObjectLit(Vec<(String, AstNode)>, Loc),
     Index  { obj: Box<AstNode>, index: Box<AstNode>, loc: Loc },
     Field  { obj: Box<AstNode>, name: String, loc: Loc },
 
-    // ── Ranges ─
+    //  Ranges
     Range {
         start: Box<AstNode>,
         end:   Box<AstNode>,
@@ -98,11 +102,21 @@ pub enum AstNode {
         loc:   Loc,
     },
 
-    // ── Modules ─
+    //  Modules
     Use { path: Vec<String>, loc: Loc },
+
+    //  Error declarations
+    /// `error Foo` — flat single error kind.
+    ErrorDecl { name: String, loc: Loc },
+    /// `error Name { | A | B | C }` — grouped enum.
+    ErrorEnum { name: String, variants: Vec<String>, loc: Loc },
+
+    //  Failure expressions
+    Fallback { expr: Box<AstNode>, default: Box<AstNode>, loc: Loc },
+    Except { expr: Box<AstNode>, arms: Vec<ExceptArm>, loc: Loc },
 }
 
-// ── Template parts ───────────────────────────────────────────────────────────
+//  Template parts
 
 #[derive(Debug, Clone)]
 pub enum TemplatePart {
@@ -115,4 +129,12 @@ pub enum TemplatePart {
 pub struct SwitchArm {
     pub patterns: Vec<AstNode>,   // values to match (empty = default `_`)
     pub body:     AstBlock,
+}
+
+/// A single arm of an `except` block.
+#[derive(Debug, Clone)]
+pub struct ExceptArm {
+    /// Failure type name to match (empty = default `_`).
+    pub type_name: String,
+    pub body: AstBlock,
 }

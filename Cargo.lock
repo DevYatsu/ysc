@@ -1576,9 +1576,7 @@ dependencies = [
  "clap",
  "colored",
  "logos",
- "rayon",
  "rustyline",
- "thiserror",
  "ys-core",
  "ys-runtime",
 ]
@@ -1598,8 +1596,6 @@ version = "0.1.0"
 dependencies = [
  "dashmap 6.1.0",
  "logos",
- "serde",
- "serde_json",
  "tokio",
  "tower-lsp",
  "ys-core",
@@ -1609,11 +1605,8 @@ dependencies = [
 name = "ys-runtime"
 version = "0.1.0"
 dependencies = [
- "logos",
- "parking_lot",
  "rayon",
  "rustc-hash",
- "thiserror",
  "ureq",
  "ys-core",
 ]

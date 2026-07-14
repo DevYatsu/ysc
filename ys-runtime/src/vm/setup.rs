@@ -42,7 +42,24 @@ pub fn run_interpreter(program: Program) -> Result<(), JitError> {
         }
     }
 
-    // 3. Initialize the shared context.
+    // 3. Ensure common failure type names are in the string pool so they
+    // can be referenced by name at runtime (e.g. division by zero).
+    let failure_names: &[&str] = &[
+        "DivisionByZero",
+        "ModByZero",
+        "IndexOutOfBounds",
+        "TypeError",
+        "NetworkError",
+    ];
+    let mut pool: Vec<Arc<str>> = program.string_pool.to_vec();
+    for &name in failure_names {
+        if !pool.iter().any(|s| s.as_ref() == name) {
+            pool.push(Arc::from(name));
+        }
+    }
+    let string_pool: Arc<[Arc<str>]> = Arc::from(pool);
+
+    // 4. Initialize the shared context.
     // Build string-keyed callables from both the name_id map and remaining
     // native functions that weren't referenced in any source file.
     let mut callables_by_name: FxHashMap<String, Callable> = FxHashMap::default();
@@ -58,7 +75,7 @@ pub fn run_interpreter(program: Program) -> Result<(), JitError> {
     }
     let ctx = Arc::new(Context {
         globals: SyncCell::new(vec![Value::from_bits(0); program.globals_count]),
-        string_pool: Arc::clone(&program.string_pool),
+        string_pool,
         callables: SyncCell::new(callable_map),
         callables_by_name: SyncCell::new(callables_by_name),
         heap: Heap {

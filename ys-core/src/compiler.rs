@@ -24,15 +24,16 @@ impl From<(usize, usize)> for Loc {
     }
 }
 
-//  NaN-Boxing constants 
+//  NaN-Boxing constants
 
 pub const QNAN:     u64 = 0x7ff0000000000000;
 pub const TAG_MASK: u64 = 0x000F000000000000;
 pub const TAG_BOOL: u64 = 0x0001000000000000;
 pub const TAG_OBJ:  u64 = 0x0002000000000000;
-pub const TAG_POOL: u64 = 0x000A000000000000;
+pub const TAG_POOL:   u64 = 0x000A000000000000;
+pub const TAG_FAILURE: u64 = 0x000B000000000000;
 
-//  Value 
+//  Value
 
 /// A NaN-boxed 64-bit value.
 ///
@@ -60,6 +61,10 @@ impl Value {
     /// Create a Value referencing a compile-time interned (pool) string by its ID.
     #[inline(always)]
     pub fn pool(id: u32) -> Self { Self(QNAN | TAG_POOL | (id as u64)) }
+
+    /// Create a failure value tagged with a failure-type name ID.
+    #[inline(always)]
+    pub fn failure(name_id: u32) -> Self { Self(QNAN | TAG_FAILURE | (name_id as u64)) }
 
     /// Inline a string of up to 6 bytes into the NaN payload (SSO).
     /// Returns `None` if the string is too long.
@@ -106,6 +111,16 @@ impl Value {
         }
     }
 
+    /// Extract the failure-type name ID if this value is a failure.
+    #[inline(always)]
+    pub fn as_failure_id(self) -> Option<u32> {
+        if (self.0 & (QNAN | TAG_MASK)) == (QNAN | TAG_FAILURE) {
+            Some((self.0 & 0xFFFFFFFF) as u32)
+        } else {
+            None
+        }
+    }
+
     /// Decode an SSO string directly from the NaN payload, without heap
     /// access.  Returns `None` if this value is not an SSO string.
     pub fn as_sso_str(self) -> Option<[u8; 6]> {
@@ -132,6 +147,7 @@ impl Value {
     pub fn is_truthy(self) -> bool {
         if let Some(b) = self.as_bool() { return b; }
         if let Some(n) = self.as_number() { return n != 0.0 && !n.is_nan(); }
+        if self.as_failure_id().is_some() { return false; }
         // Objects and SSO strings are truthy.
         self.0 != 0
     }
@@ -143,7 +159,7 @@ impl Value {
     pub fn from_bits(b: u64) -> Self { Self(b) }
 }
 
-//  Instructions ─
+//  Instructions
 
 /// The instruction set for the register-based YatsuScript VM.
 #[derive(Debug, Clone, PartialEq)]
@@ -160,12 +176,15 @@ pub enum Instruction {
     Jump(usize),
     /// Conditional jump: jump to `target` when `cond` register is falsy.
     JumpIfFalse { cond: usize, target: usize },
+    /// Jump to `target` when `src` register is **not** a failure value.
+    /// Used by the `or` / `except` operators to skip the fallback path.
+    JumpIfNotFail { src: usize, target: usize },
     /// Jump to `target` when `var >= end` (for‑loop step‑>0 optimisation).
     /// Merges the common `Lt cond,var,end` + `JumpIfFalse cond,target` pair
     /// into a single instruction, saving a register and a dispatch cycle.
     JumpIfNotLess { var: usize, end: usize, target: usize },
 
-    //  Arithmetic ─
+    //  Arithmetic
     /// Add numbers (no NaN check — both operands MUST be plain f64).
     AddNum { dst: usize, lhs: usize, rhs: usize },
     /// Add numbers or concatenate strings.
@@ -180,12 +199,16 @@ pub enum Instruction {
     Mod { dst: usize, lhs: usize, rhs: usize, loc: Loc },
     /// Logical NOT of a value.
     Not { dst: usize, src: usize, loc: Loc },
+    /// Arithmetic negation of a number.
+    Neg { dst: usize, src: usize, loc: Loc },
+    /// Produce a failure value with the given failure-type name ID.
+    Fail { dst: usize, name_id: u32 },
     /// Atomic increment of a local register (expected to contain a number).
     Increment(usize),
     /// Atomic increment of a global variable slot.
     IncrementGlobal(usize),
 
-    //  Comparisons 
+    //  Comparisons
     Eq { dst: usize, lhs: usize, rhs: usize },
     Ne { dst: usize, lhs: usize, rhs: usize },
     Lt { dst: usize, lhs: usize, rhs: usize, loc: Loc },
@@ -193,7 +216,7 @@ pub enum Instruction {
     Gt { dst: usize, lhs: usize, rhs: usize, loc: Loc },
     Ge { dst: usize, lhs: usize, rhs: usize, loc: Loc },
 
-    //  Collections 
+    //  Collections
     /// Create a new list object on the heap with an initial element count.
     NewList { dst: usize, len: usize },
     /// Create a list from pre‑evaluated element registers (list literal).
@@ -215,33 +238,33 @@ pub enum Instruction {
     /// Write a property to an object by interned name ID.
     ObjectSet { obj: usize, name_id: u32, src: usize, loc: Loc },
 
-    //  Closures 
+    //  Closures
     /// Create a closure that captures current register values.
     /// Create a closure that captures current register values.
     /// The closure calls a function by its interned name_id through the
     /// unified callables map — the same path as any named function call.
     MakeClosure { dst: usize, name_id: u32, captures: Arc<[usize]> },
 
-    //  Calls 
+    //  Calls
     /// Call a statically-known function by its string-pool name ID.
     Call(Box<CallData>),
     /// Call a function whose name is looked up at runtime from a register.
     CallDynamic(Box<CallDynamicData>),
 
-    //  Ranges ─
+    //  Ranges
     /// Construct a Range object on the heap.
     Range { dst: usize, start: usize, end: usize, step: Option<usize>, loc: Loc },
     /// Destructure a Range into its start, end, and step components.
     RangeInfo { range: usize, start_dst: usize, end_dst: usize, step_dst: usize },
 
-    //  Control 
+    //  Control
     /// Return from the current call frame.
     Return(Option<usize>),
     /// Await a Promise — yields to the event loop if pending.
     Await { dst: usize, promise: usize, loc: Loc },
 }
 
-//  Instruction payloads 
+//  Instruction payloads
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct CallData {
@@ -259,7 +282,7 @@ pub struct CallDynamicData {
     pub loc:        Loc,
 }
 
-//  User-defined function ─
+//  User-defined function
 
 /// A compiled user-defined function.
 #[derive(Debug, Clone, PartialEq)]
@@ -275,7 +298,7 @@ pub struct UserFunction {
     pub params_count: usize,
 }
 
-//  Program 
+//  Program
 
 /// The fully compiled output of the parser — ready for execution.
 #[derive(Debug, Clone, PartialEq)]

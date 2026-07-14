@@ -4,7 +4,8 @@
 
 use crate::context::{Callable, Context, NativeFn};
 use crate::heap::ManagedObject;
-use crate::vm::{execute_bytecode, make_registers};
+use crate::vm::execute_bytecode;
+use crate::vm::PromiseState;
 use crate::value_fmt::stringify_value;
 use rustc_hash::FxHashMap;
 use std::io::{Read, Write};
@@ -18,27 +19,44 @@ pub fn register(fns: &mut FxHashMap<String, NativeFn>) {
     fns.insert("serve".into(), Arc::new(native_serve));
 }
 
+/// Wrap a value in a resolved Promise on the heap.
+fn resolved_promise(ctx: &Context, val: Value) -> Value {
+    ctx.alloc(ManagedObject::Promise(PromiseState::Resolved(val)))
+}
+
+/// Wrap a failure name-id in a rejected Promise on the heap.
+fn rejected_promise(ctx: &Context, name_id: u32) -> Value {
+    ctx.alloc(ManagedObject::Promise(PromiseState::Rejected(name_id)))
+}
+
+/// Look up a string-pool index for a failure name.
+fn lookup_failure_id(ctx: &Context, name: &str) -> u32 {
+    ctx.string_pool.iter().position(|s| s.as_ref() == name).unwrap_or(0) as u32
+}
+
 fn native_fetch(ctx: &Arc<Context>, args: &[Value]) -> Result<Value, JitError> {
     let url = args.first()
         .and_then(|v| ctx.value_as_string(*v))
         .ok_or_else(|| JitError::runtime(
-            "fetch requires a string URL as its first argument", 0, 0,
+            "fetch(url) requires a string URL as the first argument", 0, 0,
         ))?;
 
-    match ureq::get(&url).call() {
+    let result = match ureq::get(&url).call() {
         Ok(resp) => {
             let status = resp.status();
             let mut reader = resp.into_body().into_reader();
             let mut body = String::new();
             let _ = reader.read_to_string(&mut body);
             println!("Fetch {}: {} - {}", url, status, body);
-            Ok(Value::from_bits(0))
+            // Return the response body as a string value
+            Value::sso(&body).unwrap_or_else(|| ctx.alloc(ManagedObject::String(Arc::from(body))))
         }
         Err(e) => {
-            println!("Fetch {} failed: {}", url, e);
-            Ok(Value::from_bits(0))
+            eprintln!("Fetch {} failed: {}", url, e);
+            return Ok(rejected_promise(ctx, lookup_failure_id(ctx, "NetworkError")));
         }
-    }
+    };
+    Ok(resolved_promise(ctx, result))
 }
 
 fn native_serve(ctx: &Arc<Context>, args: &[Value]) -> Result<Value, JitError> {
@@ -81,7 +99,10 @@ fn native_serve(ctx: &Arc<Context>, args: &[Value]) -> Result<Value, JitError> {
         }
     });
 
-    Ok(Value::from_bits(0))
+    // Return a resolved Promise indicating the server has started.
+    let msg = format!("Server started on port {}", port);
+    let val = Value::sso(&msg).unwrap_or_else(|| ctx.alloc(ManagedObject::String(Arc::from(msg))));
+    Ok(resolved_promise(ctx, val))
 }
 
 fn handle_connection(mut stream: TcpStream, ctx: &Arc<Context>, handler_name: &str) {

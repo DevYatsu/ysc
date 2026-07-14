@@ -11,7 +11,7 @@ pub fn optimize_program(program: &mut AstBlock) {
     constant_fold_block(program);
 }
 
-// ── Constant folding ─────────────────────────────────────────────────────────
+//  Constant folding
 
 fn constant_fold_block(block: &mut AstBlock) {
     for node in block.iter_mut() {
@@ -115,10 +115,10 @@ fn constant_fold(node: AstNode) -> AstNode {
         AstNode::ListLit(elems, loc) => {
             AstNode::ListLit(elems.into_iter().map(constant_fold).collect(), loc)
         }
-        AstNode::FunDecl { name, params, body, exported, loc } => {
+        AstNode::FunDecl { name, params, body, exported, loc, error_kind } => {
             let mut body = body;
             constant_fold_block(&mut body);
-            AstNode::FunDecl { name, params, body, exported, loc }
+            AstNode::FunDecl { name, params, body, exported, loc, error_kind }
         }
 
         // Everything else: leave as-is

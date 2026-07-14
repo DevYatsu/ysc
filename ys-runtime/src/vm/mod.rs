@@ -17,20 +17,18 @@ use crate::context::{Callable, Context};
 use crate::heap::{Generation, ManagedObject};
 use crate::value_ext::ValueExt;
 use std::cell::RefCell;
-use std::pin::Pin;
 
 thread_local! {
     static REG_POOL: RefCell<Vec<Vec<Value>>> = const { RefCell::new(Vec::new()) };
 }
 
 use std::sync::Arc;
-use std::future::Future;
-use ys_core::compiler::{Instruction, Loc, Value, QNAN};
+use ys_core::compiler::{Instruction, Loc, Value, QNAN, TAG_FAILURE};
 use ys_core::error::JitError;
 
 pub use setup::run_interpreter;
 
-// ── Interpreter entry point (public) ─────────────────────────────────────────
+//  Interpreter entry point (public)
 
 pub use crate::context::Backend;
 
@@ -42,7 +40,7 @@ impl Backend for Interpreter {
     }
 }
 
-// ── Internal helpers ──────────────────────────────────────────────────────────
+//  Internal helpers
 
 /// Allocate a zero-initialised register array of `count` slots.
 pub(crate) fn make_registers(count: usize) -> Vec<Value> {
@@ -106,24 +104,32 @@ fn pool_regs(regs: Vec<Value>) {
 
 const _: () = assert!(std::mem::size_of::<Value>() == 8);
 
-// ── Hot-path arithmetic macros ────────────────────────────────────────────
+//  Hot-path arithmetic macros
 
 macro_rules! numeric_bin {
     ($regs:expr, $dst:expr, $l:expr, $r:expr, $op:tt, $loc:expr) => {{
         let regs = $regs;
-        let lv = regs[$l];
-        let rv = regs[$r];
-        let lb = lv.to_bits();
-        let rb = rv.to_bits();
-        if (lb & QNAN) != QNAN && (rb & QNAN) != QNAN {
-            regs[$dst] = Value::number(f64::from_bits(lb) $op f64::from_bits(rb));
-        } else if let (Some(lv), Some(rv)) = (lv.as_number(), rv.as_number()) {
-            regs[$dst] = Value::number(lv $op rv);
+        let l_bits = regs[$l].to_bits();
+        let r_bits = regs[$r].to_bits();
+        if (l_bits & (QNAN | TAG_FAILURE)) == (QNAN | TAG_FAILURE) {
+            regs[$dst] = regs[$l];
+        } else if (r_bits & (QNAN | TAG_FAILURE)) == (QNAN | TAG_FAILURE) {
+            regs[$dst] = regs[$r];
         } else {
-            return Err(JitError::runtime(
-                concat!("Math error: expected numbers for '", stringify!($op), "'"),
-                $loc.line as usize, $loc.col as usize,
-            ));
+            let lv = regs[$l];
+            let rv = regs[$r];
+            let lb = lv.to_bits();
+            let rb = rv.to_bits();
+            if (lb & QNAN) != QNAN && (rb & QNAN) != QNAN {
+                regs[$dst] = Value::number(f64::from_bits(lb) $op f64::from_bits(rb));
+            } else if let (Some(lv), Some(rv)) = (lv.as_number(), rv.as_number()) {
+                regs[$dst] = Value::number(lv $op rv);
+            } else {
+                return Err(JitError::runtime(
+                    concat!("Math error: expected numbers for '", stringify!($op), "'"),
+                    $loc.line as usize, $loc.col as usize,
+                ));
+            }
         }
     }};
 }
@@ -131,24 +137,32 @@ macro_rules! numeric_bin {
 macro_rules! compare_op {
     ($regs:expr, $dst:expr, $l:expr, $r:expr, $op:tt, $loc:expr) => {{
         let regs = $regs;
-        let lv = regs[$l];
-        let rv = regs[$r];
-        let lb = lv.to_bits();
-        let rb = rv.to_bits();
-        let result = if (lb & QNAN) != QNAN && (rb & QNAN) != QNAN {
-            Some(f64::from_bits(lb) $op f64::from_bits(rb))
+        let l_bits = regs[$l].to_bits();
+        let r_bits = regs[$r].to_bits();
+        if (l_bits & (QNAN | TAG_FAILURE)) == (QNAN | TAG_FAILURE) {
+            regs[$dst] = regs[$l];
+        } else if (r_bits & (QNAN | TAG_FAILURE)) == (QNAN | TAG_FAILURE) {
+            regs[$dst] = regs[$r];
         } else {
-            match (lv.as_number(), rv.as_number()) {
-                (Some(lv), Some(rv)) => Some(lv $op rv),
-                _ => None,
+            let lv = regs[$l];
+            let rv = regs[$r];
+            let lb = lv.to_bits();
+            let rb = rv.to_bits();
+            let result = if (lb & QNAN) != QNAN && (rb & QNAN) != QNAN {
+                Some(f64::from_bits(lb) $op f64::from_bits(rb))
+            } else {
+                match (lv.as_number(), rv.as_number()) {
+                    (Some(lv), Some(rv)) => Some(lv $op rv),
+                    _ => None,
+                }
+            };
+            match result {
+                Some(b) => regs[$dst] = Value::bool(b),
+                None    => return Err(JitError::runtime(
+                    concat!("Compare error: expected numbers for '", stringify!($op), "'"),
+                    $loc.line as usize, $loc.col as usize,
+                )),
             }
-        };
-        match result {
-            Some(b) => regs[$dst] = Value::bool(b),
-            None    => return Err(JitError::runtime(
-                concat!("Compare error: expected numbers for '", stringify!($op), "'"),
-                $loc.line as usize, $loc.col as usize,
-            )),
         }
     }};
 }
@@ -157,19 +171,22 @@ macro_rules! inc_register {
     ($regs:expr, $i:expr) => {{
         let regs = $regs;
         let v = regs[$i];
-        if let Some(n) = v.as_number() {
+        if (v.to_bits() & (QNAN | TAG_FAILURE)) == (QNAN | TAG_FAILURE) {
+            // Failure propagation — leave the failure register as-is
+        } else if let Some(n) = v.as_number() {
             regs[$i] = Value::number(n + 1.0);
         }
     }};
 }
 
+#[allow(dead_code)]
 #[inline(always)]
 fn eq_fast(ctx: &Context, lb: u64, rb: u64) -> bool {
     if lb == rb && (lb & QNAN) != QNAN { true }
     else { ctx.values_equal(Value::from_bits(lb), Value::from_bits(rb)) }
 }
 
-// ── GetResult for collection access ────────────────────────────────────────
+//  GetResult for collection access
 
 enum GetResult {
     Value(Value),
@@ -177,7 +194,7 @@ enum GetResult {
     Error(String),
 }
 
-// ── Collection handlers ────────────────────────────────────────────────────
+//  Collection handlers
 
 fn handle_list_get(
     regs: &[Value],
@@ -272,15 +289,21 @@ fn handle_list_set(
         generation = obj.generation;
     }
 
-    // Write barrier — track tenured → nursery pointers.
+    record_write_barrier(ctx, generation, oid, src_val);
+    Ok(())
+}
+
+/// Insert a remembered-set entry when a tenured object gains a reference to a
+/// nursery object.  Called by [`handle_list_set`] and [`handle_object_set`].
+#[inline]
+fn record_write_barrier(ctx: &Context, generation: Generation, oid: u32, val: Value) {
     if generation == Generation::Tenured
-        && let Some(src_oid) = src_val.as_obj_id()
+        && let Some(src_oid) = val.as_obj_id()
         && let Some(Some(src_obj)) = ctx.heap.objects.get().get(src_oid as usize)
         && src_obj.generation == Generation::Nursery
     {
         ctx.heap.metadata.get_mut().remembered_set.insert(oid);
     }
-    Ok(())
 }
 
 fn handle_object_get(
@@ -345,18 +368,11 @@ fn handle_object_set(
         generation = o.generation;
     }
 
-    // Write barrier — track tenured → nursery pointers.
-    if generation == Generation::Tenured
-        && let Some(src_oid) = src_val.as_obj_id()
-        && let Some(Some(src_obj)) = ctx.heap.objects.get().get(src_oid as usize)
-        && src_obj.generation == Generation::Nursery
-    {
-        ctx.heap.metadata.get_mut().remembered_set.insert(oid);
-    }
+    record_write_barrier(ctx, generation, oid, src_val);
     Ok(())
 }
 
-// ── Call frame ────────────────────────────────────────────────────────────────
+//  Call frame
 
 #[repr(transparent)]
 #[derive(Clone, Copy)]
@@ -383,6 +399,7 @@ pub struct FrameState {
 pub enum PromiseState {
     Pending { continuation: Option<Box<FrameState>> },
     Resolved(Value),
+    Rejected(u32),  // failure name_id from string pool
 }
 
 struct CallFrame {
@@ -418,7 +435,44 @@ fn set_current_frames(frames: &Vec<CallFrame>) {
     CURRENT_FRAMES.with(|cell| unsafe { *cell.get() = frames as *const Vec<CallFrame> });
 }
 
-// ── Main dispatch loop ────────────────────────────────────────────────────────
+/// Dispatch a resolved [`Callable`] — calls a native function or pushes a
+/// new call frame for a user-defined function.
+fn dispatch_callable(
+    frames: &mut Vec<CallFrame>,
+    ctx: &Arc<Context>,
+    callable: &Callable,
+    args_regs: &Arc<[usize]>,
+    dst: Option<usize>,
+    loc: Loc,
+) -> Result<(), JitError> {
+    let fi = frames.len() - 1;
+    match callable {
+        Callable::Native(nf) => {
+            let args: Vec<Value> = args_regs.iter().map(|&r| frames[fi].registers[r]).collect();
+            let res = nf(ctx, &args)?;
+            if let Some(d) = dst { frames[fi].registers[d] = res; }
+        }
+        Callable::User(f) => {
+            if args_regs.len() != f.params_count {
+                return Err(JitError::runtime(
+                    format!("Function arity mismatch: expected {}, got {}", f.params_count, args_regs.len()),
+                    loc.line as usize, loc.col as usize,
+                ));
+            }
+            let ret = dst.map(|d| ReturnTarget { dst: d });
+            let callee_regs = build_call_registers(f.locals_count, args_regs, &frames[fi].registers);
+            frames.push(CallFrame {
+                instructions: InstrPtr::from_arc(&f.instructions),
+                registers: callee_regs,
+                pc: 0,
+                return_to: ret,
+            });
+        }
+    }
+    Ok(())
+}
+
+//  Main dispatch loop
 
 pub fn execute_bytecode(
     instructions: &Arc<[Instruction]>,
@@ -426,7 +480,7 @@ pub fn execute_bytecode(
     registers:    Vec<Value>,
     start_pc:     usize,
 ) -> Result<Value, JitError> {
-// ── Frame stack ───────────────────────────────────────────────────
+//  Frame stack
         let mut frames = vec![CallFrame {
             instructions: InstrPtr::from_arc(instructions),
             registers,
@@ -458,29 +512,30 @@ pub fn execute_bytecode(
             let instr = &instr_ptr.slice()[pc];
 
             match instr {
-                // ── Memory ───────────────────────────────────────────────
+                //  Memory
                 Instruction::LoadLiteral { dst, val } => {
                     frames[fi].registers[*dst] = *val;
                     frames[fi].pc += 1;
                 }
                 Instruction::Move { dst, src } => {
+                    let fr = &mut frames[fi];
                     let d = *dst;
-                    let v = frames[fi].registers[*src];
-                    frames[fi].registers[d] = v;
-                    frames[fi].pc += 1;
+                    let v = fr.registers[*src];
+                    fr.registers[d] = v;
+                    fr.pc += 1;
                 }
                 Instruction::LoadGlobal { dst, global } => {
-                    let v = ctx.globals.get()[*global];
-                    frames[fi].registers[*dst] = v;
-                    frames[fi].pc += 1;
+                    let fr = &mut frames[fi];
+                    fr.registers[*dst] = ctx.globals.get()[*global];
+                    fr.pc += 1;
                 }
                 Instruction::StoreGlobal { global, src } => {
-                    let v = frames[fi].registers[*src];
-                    ctx.globals.get_mut()[*global] = v;
-                    frames[fi].pc += 1;
+                    let fr = &mut frames[fi];
+                    ctx.globals.get_mut()[*global] = fr.registers[*src];
+                    fr.pc += 1;
                 }
 
-                // ── Control flow ──────────────────────────────────────────
+                //  Control flow
                 Instruction::Jump(target) => { frames[fi].pc = *target; continue; }
                 Instruction::JumpIfNotLess { var, end, target } => {
                     let v = frames[fi].registers[*var];
@@ -501,10 +556,17 @@ pub fn execute_bytecode(
                     }
                     continue;
                 }
+                Instruction::JumpIfNotFail { src, target } => {
+                    let val = frames[fi].registers[*src];
+                    if (val.to_bits() & (QNAN | TAG_FAILURE)) != (QNAN | TAG_FAILURE) {
+                        frames[fi].pc = *target;
+                    } else {
+                        frames[fi].pc += 1;
+                    }
+                    continue;
+                }
                 Instruction::Return(val_reg) => {
-                    let ret = val_reg
-                        .map(|r| frames[fi].registers[r])
-                        .unwrap_or_else(|| Value::from_bits(0));
+                    let ret = val_reg.map_or(Value::from_bits(0), |r| frames[fi].registers[r]);
                     let frame = frames.pop().unwrap();
                     pool_regs(frame.registers);
                     if let Some(t) = frame.return_to {
@@ -517,20 +579,23 @@ pub fn execute_bytecode(
                 Instruction::Await { dst, promise, loc: _loc } => {
                     let pv = frames[fi].registers[*promise];
                     // Check if the value is a Promise object on the heap.
-                    let is_promise = pv.as_obj_id().is_some_and(|oid| {
+                    let maybe_oid = pv.as_obj_id();
+                    if let Some(oid) = maybe_oid.filter(|&oid| {
                         let objects = ctx.heap.objects.get();
                         objects.get(oid as usize)
                             .and_then(|o| o.as_ref())
                             .is_some_and(|obj| matches!(obj.obj, ManagedObject::Promise(_)))
-                    });
-                    if is_promise {
-                        let oid = pv.as_obj_id().unwrap();
+                    }) {
                         let mut resolved_val = None;
                         {
                             let objects = ctx.heap.objects.get();
                             if let Some(Some(obj)) = objects.get(oid as usize) {
                                 if let ManagedObject::Promise(PromiseState::Resolved(v)) = &obj.obj {
                                     resolved_val = Some(*v);
+                                } else if let ManagedObject::Promise(PromiseState::Rejected(name_id)) = &obj.obj {
+                                    frames[fi].registers[*dst] = Value::failure(*name_id);
+                                    frames[fi].pc += 1;
+                                    continue;
                                 }
                             }
                         }
@@ -557,17 +622,23 @@ pub fn execute_bytecode(
                     }
                 }
 
-                // ── Arithmetic ────────────────────────────────────────────
+                //  Arithmetic
                 Instruction::AddNum { dst, lhs, rhs } => {
-                    frames[fi].registers[*dst] = Value::number(
-                        f64::from_bits(frames[fi].registers[*lhs].to_bits()) +
-                        f64::from_bits(frames[fi].registers[*rhs].to_bits())
+                    let fr = &mut frames[fi];
+                    let lb = fr.registers[*lhs].to_bits();
+                    let rb = fr.registers[*rhs].to_bits();
+                    if (lb & (QNAN | TAG_FAILURE)) == (QNAN | TAG_FAILURE) { fr.registers[*dst] = fr.registers[*lhs]; fr.pc += 1; continue; }
+                    if (rb & (QNAN | TAG_FAILURE)) == (QNAN | TAG_FAILURE) { fr.registers[*dst] = fr.registers[*rhs]; fr.pc += 1; continue; }
+                    fr.registers[*dst] = Value::number(
+                        f64::from_bits(lb) + f64::from_bits(rb)
                     );
-                    frames[fi].pc += 1;
+                    fr.pc += 1;
                 }
                 Instruction::Add { dst, lhs, rhs, loc } => {
                     let lv = frames[fi].registers[*lhs];
                     let rv = frames[fi].registers[*rhs];
+                    if (lv.to_bits() & (QNAN | TAG_FAILURE)) == (QNAN | TAG_FAILURE) { frames[fi].registers[*dst] = lv; frames[fi].pc += 1; continue; }
+                    if (rv.to_bits() & (QNAN | TAG_FAILURE)) == (QNAN | TAG_FAILURE) { frames[fi].registers[*dst] = rv; frames[fi].pc += 1; continue; }
                     let lb = lv.to_bits();
                     let rb = rv.to_bits();
 
@@ -576,16 +647,14 @@ pub fn execute_bytecode(
                     } else if let (Some(lv), Some(rv)) = (lv.as_number(), rv.as_number()) {
                         frames[fi].registers[*dst] = Value::number(lv + rv);
                     } else {
-                        // String concatenation — using as_string directly for clarity
+                        // String concatenation
                         if let (Some(ls), Some(rs)) = (lv.as_string(&ctx), rv.as_string(&ctx)) {
                             let mut s = String::with_capacity(ls.len() + rs.len());
                             s.push_str(&ls);
                             s.push_str(&rs);
-                            if let Some(sso) = Value::sso(&s) {
-                                frames[fi].registers[*dst] = sso;
-                            } else {
-                                frames[fi].registers[*dst] = ctx.alloc(ManagedObject::String(Arc::from(s)));
-                            }
+                            frames[fi].registers[*dst] = Value::sso(&s).unwrap_or_else(|| {
+                                ctx.alloc(ManagedObject::String(Arc::from(s)))
+                            });
                         } else {
                             return Err(JitError::runtime(
                                 "Add error: expected numbers or strings",
@@ -604,32 +673,78 @@ pub fn execute_bytecode(
                     frames[fi].pc += 1;
                 }
                 Instruction::Div { dst, lhs, rhs, loc } => {
+                    // Division by zero → produce DivisionByZero failure
+                    {
+                        let rv = frames[fi].registers[*rhs];
+                        if let Some(n) = rv.as_number() && n == 0.0 {
+                            let name_id = ctx.string_pool.iter()
+                                .position(|s| s.as_ref() == "DivisionByZero")
+                                .unwrap_or(0) as u32;
+                            frames[fi].registers[*dst] = Value::failure(name_id);
+                            frames[fi].pc += 1;
+                            continue;
+                        }
+                    }
                     numeric_bin!(&mut frames[fi].registers, *dst, *lhs, *rhs, /, *loc);
                     frames[fi].pc += 1;
                 }
                 Instruction::Mod { dst, lhs, rhs, loc } => {
+                    // Mod by zero → produce ModByZero failure
+                    {
+                        let rv = frames[fi].registers[*rhs];
+                        if let Some(n) = rv.as_number() && n == 0.0 {
+                            let name_id = ctx.string_pool.iter()
+                                .position(|s| s.as_ref() == "ModByZero")
+                                .unwrap_or(0) as u32;
+                            frames[fi].registers[*dst] = Value::failure(name_id);
+                            frames[fi].pc += 1;
+                            continue;
+                        }
+                    }
                     numeric_bin!(&mut frames[fi].registers, *dst, *lhs, *rhs, %, *loc);
                     frames[fi].pc += 1;
                 }
                 Instruction::Not { dst, src, .. } => {
-                    let d = *dst;
-                    frames[fi].registers[d] =
-                          Value::bool(!frames[fi].registers[*src].is_truthy());
-                    frames[fi].pc += 1;
+                    let fr = &mut frames[fi];
+                    let sv = fr.registers[*src];
+                    if (sv.to_bits() & (QNAN | TAG_FAILURE)) == (QNAN | TAG_FAILURE) { fr.registers[*dst] = sv; fr.pc += 1; continue; }
+                    fr.registers[*dst] = Value::bool(!sv.is_truthy());
+                    fr.pc += 1;
+                }
+                Instruction::Neg { dst, src, loc } => {
+                    let fr = &mut frames[fi];
+                    let v = fr.registers[*src];
+                    if (v.to_bits() & (QNAN | TAG_FAILURE)) == (QNAN | TAG_FAILURE) { fr.registers[*dst] = v; fr.pc += 1; continue; }
+                    if let Some(n) = v.as_number() {
+                        fr.registers[*dst] = Value::number(-n);
+                    } else {
+                        return Err(JitError::runtime(
+                            "Negate error: expected a number",
+                            loc.line as usize, loc.col as usize,
+                        ));
+                    }
+                    fr.pc += 1;
+                }
+                Instruction::Fail { dst, name_id } => {
+                    let fr = &mut frames[fi];
+                    fr.registers[*dst] = Value::failure(*name_id);
+                    fr.pc += 1;
                 }
 
-                // ── Comparisons ───────────────────────────────────────────
+                //  Comparisons
                 Instruction::Eq { dst, lhs, rhs } => {
-                    let lv = frames[fi].registers[*lhs];
-                    let rv = frames[fi].registers[*rhs];
-                    frames[fi].registers[*dst] = Value::bool(lv.to_bits() == rv.to_bits() && (lv.to_bits() & QNAN) != QNAN);
-                    frames[fi].pc += 1;
+                    let fr = &mut frames[fi];
+                    let lv = fr.registers[*lhs];
+                    let rv = fr.registers[*rhs];
+                    fr.registers[*dst] = Value::bool(lv.to_bits() == rv.to_bits() && (lv.to_bits() & QNAN) != QNAN);
+                    fr.pc += 1;
                 }
                 Instruction::Ne { dst, lhs, rhs } => {
-                    let lv = frames[fi].registers[*lhs];
-                    let rv = frames[fi].registers[*rhs];
-                    frames[fi].registers[*dst] = Value::bool(lv.to_bits() != rv.to_bits() || (lv.to_bits() & QNAN) == QNAN);
-                    frames[fi].pc += 1;
+                    let fr = &mut frames[fi];
+                    let lv = fr.registers[*lhs];
+                    let rv = fr.registers[*rhs];
+                    fr.registers[*dst] = Value::bool(lv.to_bits() != rv.to_bits() || (lv.to_bits() & QNAN) == QNAN);
+                    fr.pc += 1;
                 }
                 Instruction::Lt { dst, lhs, rhs, loc } => {
                     compare_op!(&mut frames[fi].registers, *dst, *lhs, *rhs, <, *loc);
@@ -648,35 +763,38 @@ pub fn execute_bytecode(
                     frames[fi].pc += 1;
                 }
 
-                // ── Increments ────────────────────────────────────────────
+                //  Increments
                 Instruction::Increment(reg) => {
                     inc_register!(&mut frames[fi].registers, *reg);
                     frames[fi].pc += 1;
                 }
                 Instruction::IncrementGlobal(global) => {
+                    let fr = &mut frames[fi];
                     let v = ctx.globals.get()[*global];
                     if let Some(n) = v.as_number() {
                         ctx.globals.get_mut()[*global] = Value::number(n + 1.0);
                     }
-                    frames[fi].pc += 1;
+                    fr.pc += 1;
                 }
 
-                // ── Ranges ────────────────────────────────────────────────
+                //  Ranges
                 Instruction::Range { dst, start, end, step, loc } => {
-                    let s = frames[fi].registers[*start].as_number()
+                    let fr = &mut frames[fi];
+                    let s = fr.registers[*start].as_number()
                         .ok_or_else(|| JitError::runtime("Range start must be a number", loc.line as usize, loc.col as usize))?;
-                    let e = frames[fi].registers[*end].as_number()
+                    let e = fr.registers[*end].as_number()
                         .ok_or_else(|| JitError::runtime("Range end must be a number", loc.line as usize, loc.col as usize))?;
                     let st = if let Some(sr) = *step {
-                        frames[fi].registers[sr].as_number()
+                        fr.registers[sr].as_number()
                             .ok_or_else(|| JitError::runtime("Range step must be a number", loc.line as usize, loc.col as usize))?
                     } else { 1.0 };
-                    frames[fi].registers[*dst] =
+                    fr.registers[*dst] =
                         ctx.alloc(ManagedObject::Range { start: s, end: e, step: st });
-                    frames[fi].pc += 1;
+                    fr.pc += 1;
                 }
                 Instruction::RangeInfo { range, start_dst, end_dst, step_dst } => {
-                    let rv  = frames[fi].registers[*range];
+                    let fr = &mut frames[fi];
+                    let rv  = fr.registers[*range];
                     let (s, e, st) = if let Some(oid) = rv.as_obj_id() {
                         let heap = ctx.heap.objects.get();
                         let o = unsafe { heap.get_unchecked(oid as usize) };
@@ -684,13 +802,13 @@ pub fn execute_bytecode(
                             && let ManagedObject::Range { start, end, step } = &o.obj
                         { (*start, *end, *step) } else { (0.0, 0.0, 1.0) }
                     } else { (0.0, 0.0, 1.0) };
-                    frames[fi].registers[*start_dst] = Value::number(s);
-                    frames[fi].registers[*end_dst]   = Value::number(e);
-                    frames[fi].registers[*step_dst]  = Value::number(st);
-                    frames[fi].pc += 1;
+                    fr.registers[*start_dst] = Value::number(s);
+                    fr.registers[*end_dst]   = Value::number(e);
+                    fr.registers[*step_dst]  = Value::number(st);
+                    fr.pc += 1;
                 }
 
-                // ── Collections ───────────────────────────────────────────
+                //  Collections
                 Instruction::NewList { dst, len } => {
                     let elems: Vec<Value> = (0..*len).map(|_| Value::from_bits(0)).collect();
                     frames[fi].registers[*dst] =
@@ -698,14 +816,15 @@ pub fn execute_bytecode(
                     frames[fi].pc += 1;
                 }
                 Instruction::NewListFrom { dst, elems } => {
-                    let vals: Vec<Value> = elems.iter().map(|&r| frames[fi].registers[r]).collect();
-                    frames[fi].registers[*dst] =
-                        ctx.alloc(ManagedObject::List(vals));
-                    frames[fi].pc += 1;
+                    let fr = &mut frames[fi];
+                    let vals: Vec<Value> = elems.iter().map(|&r| fr.registers[r]).collect();
+                    fr.registers[*dst] = ctx.alloc(ManagedObject::List(vals));
+                    fr.pc += 1;
                 }
                 Instruction::NewListRepeat { dst, val, count } => {
-                    let v = frames[fi].registers[*val];
-                    let n = frames[fi].registers[*count].as_number().unwrap_or(0.0) as usize;
+                    let fr = &mut frames[fi];
+                    let v = fr.registers[*val];
+                    let n = fr.registers[*count].as_number().unwrap_or(0.0) as usize;
                     let vals = vec![v; n];
                     frames[fi].registers[*dst] =
                         ctx.alloc(ManagedObject::List(vals));
@@ -731,14 +850,14 @@ pub fn execute_bytecode(
                     frames[fi].pc += 1;
                 }
                 Instruction::NewObjectFrom { dst, fields } => {
+                    let fr = &mut frames[fi];
                     let mut map = rustc_hash::FxHashMap::default();
                     map.reserve(fields.len());
                     for &(name_id, src) in fields.iter() {
-                        map.insert(name_id, frames[fi].registers[src]);
+                        map.insert(name_id, fr.registers[src]);
                     }
-                    frames[fi].registers[*dst] =
-                        ctx.alloc(ManagedObject::Object(map));
-                    frames[fi].pc += 1;
+                    fr.registers[*dst] = ctx.alloc(ManagedObject::Object(map));
+                    fr.pc += 1;
                 }
                 Instruction::ObjectGet { dst, obj, name_id, loc } => {
                     match handle_object_get(&frames[fi].registers, *obj, *name_id, &ctx, *loc) {
@@ -758,18 +877,19 @@ pub fn execute_bytecode(
                     frames[fi].pc += 1;
                 }
 
-                // ── Closures ──────────────────────────────────────────────
+                //  Closures
                 Instruction::MakeClosure { dst, name_id, captures } => {
+                    let fr = &mut frames[fi];
                     let mut vals = Vec::with_capacity(captures.len());
                     for &reg in captures.iter() {
-                        vals.push(frames[fi].registers[reg]);
+                        vals.push(fr.registers[reg]);
                     }
                     let cl = crate::heap::Closure { name_id: *name_id, captures: vals };
-                    frames[fi].registers[*dst] = ctx.alloc(ManagedObject::Closure(cl));
-                    frames[fi].pc += 1;
+                    fr.registers[*dst] = ctx.alloc(ManagedObject::Closure(cl));
+                    fr.pc += 1;
                 }
 
-                // ── Calls ─────────────────────────────────────────────────
+                //  Calls
                 Instruction::Call(box_data) => {
                     let name_id = box_data.name_id;
                         let dst = box_data.dst;
@@ -784,28 +904,8 @@ pub fn execute_bytecode(
                         }
                     };
 
-                    match callable {
-                        Callable::Native(nf) => {
-                            let args_regs = box_data.args_regs.clone();
-                            let args: Vec<Value> = args_regs.iter().map(|&r| frames[fi].registers[r]).collect();
-                            let res = nf(&ctx, &args)?;
-                            if let Some(d) = dst { frames[fi].registers[d] = res; }
-                            frames[fi].pc += 1;
-                        }
-                        Callable::User(f) => {
-                            let args_regs = &*box_data.args_regs;
-                            if args_regs.len() != f.params_count {
-                                return Err(JitError::runtime(
-                                    format!("Function arity mismatch: expected {}, got {}", f.params_count, args_regs.len()),
-                                    loc.line as usize, loc.col as usize,
-                                ));
-                            }
-                            let ret = dst.map(|d| ReturnTarget { dst: d });
-                            frames[fi].pc += 1;
-                            let callee_regs = build_call_registers(f.locals_count, args_regs, &frames[fi].registers);
-                            frames.push(CallFrame { instructions: InstrPtr::from_arc(&f.instructions), registers: callee_regs, pc: 0, return_to: ret });
-                        }
-                    }
+                    dispatch_callable(&mut frames, &ctx, callable, &box_data.args_regs, dst, loc)?;
+                    frames[fi].pc += 1;
                 }
 
                 Instruction::CallDynamic(box_data) => {
@@ -842,7 +942,7 @@ pub fn execute_bytecode(
                                     continue;
                                 }
 
-                            // ── List method dispatch (all 18 methods) ──
+                            //  List method dispatch (all 18 methods)
                             if let Some(list_oid) = receiver.as_obj_id() {
                                 let elems = {
                                     let objects = ctx.heap.objects.get();
@@ -994,7 +1094,60 @@ pub fn execute_bytecode(
                                 }
                             }
 
-                            return Err(JitError::runtime(format!("Unknown method '{}'", method), loc.line as usize, loc.col as usize));
+                            // User-defined method dispatch — look up method name
+                            // in global callables and call with receiver as arg[0].
+                            if let Some(callable) = ctx.get_callable_by_name(method) {
+                                let args_regs = &*box_data.args_regs;
+                                let callable = callable.clone();
+                                match callable {
+                                    Callable::Native(nf) => {
+                                        let mut args = Vec::with_capacity(args_regs.len() + 1);
+                                        args.push(receiver);
+                                        for &r in args_regs.iter() {
+                                            args.push(frames[fi].registers[r]);
+                                        }
+                                        let res = nf(&ctx, &args)?;
+                                        if let Some(d) = dst { frames[fi].registers[d] = res; }
+                                        frames[fi].pc += 1;
+                                        continue;
+                                    }
+                                    Callable::User(f) => {
+                                        let total_params = 1 + args_regs.len(); // receiver + args
+                                        if total_params != f.params_count {
+                                            return Err(JitError::runtime(
+                                                format!("Method '{}' arity mismatch: expected {}, got {}",
+                                                    method, f.params_count, total_params),
+                                                loc.line as usize, loc.col as usize,
+                                            ));
+                                        }
+                                        let mut callee_regs = build_call_registers(
+                                            f.locals_count,
+                                            args_regs, // placeholder — we'll fill recv manually
+                                            &frames[fi].registers,
+                                        );
+                                        callee_regs[0] = receiver;
+                                        for (i, &r) in args_regs.iter().enumerate() {
+                                            if i + 1 < f.locals_count {
+                                                callee_regs[i + 1] = frames[fi].registers[r];
+                                            }
+                                        }
+                                        let ret = dst.map(|d| ReturnTarget { dst: d });
+                                        frames[fi].pc += 1;
+                                        frames.push(CallFrame {
+                                            instructions: InstrPtr::from_arc(&f.instructions),
+                                            registers: callee_regs,
+                                            pc: 0,
+                                            return_to: ret,
+                                        });
+                                        continue;
+                                    }
+                                }
+                            }
+
+                            return Err(JitError::runtime(
+                                format!("No method '{}' found on this object", method),
+                                loc.line as usize, loc.col as usize,
+                            ));
                         }
 
                         // Closure dispatch — call a closure's captured function.
@@ -1004,7 +1157,7 @@ pub fn execute_bytecode(
                             let args_regs = &*box_data.args_regs;
                             let total_args = cl.captures.len() + args_regs.len();
                             let callable = ctx.get_callable(cl.name_id).ok_or_else(|| {
-                                JitError::runtime("Unknown closure function", loc.line as usize, loc.col as usize)
+                                JitError::runtime(format!("Closure references unknown function '{}'", ctx.string_pool.get(cl.name_id as usize).map_or("?", |s| s)), loc.line as usize, loc.col as usize)
                             })?;
                             let Callable::User(func) = callable else {
                                 return Err(JitError::runtime("Closure must be a user function", loc.line as usize, loc.col as usize));
@@ -1033,9 +1186,12 @@ pub fn execute_bytecode(
                         }
                     }
 
-                    let name_id = ctx.value_as_pool_id(callee_val).ok_or_else(|| JitError::runtime(
-                        "Callee is not a known function name", loc.line as usize, loc.col as usize,
-                    ))?;
+                    let name_id = ctx.value_as_pool_id(callee_val).ok_or_else(|| {
+                        let hint = if let Some(b) = callee_val.as_bool() { format!("boolean '{}'", b) }
+                            else if callee_val.as_number().is_some() { "number".into() }
+                            else { "value".into() };
+                        JitError::runtime(format!("Cannot call {} as a function — not a function name or callable", hint), loc.line as usize, loc.col as usize)
+                    })?;
                     let callable = ctx.get_callable(name_id).or_else(|| {
                         let name = ctx.string_pool.get(name_id as usize)?;
                         ctx.get_callable_by_name(name)
@@ -1044,28 +1200,8 @@ pub fn execute_bytecode(
                         loc.line as usize, loc.col as usize,
                     ))?;
 
-                    match callable {
-                        Callable::Native(nf) => {
-                            let args_regs = box_data.args_regs.clone();
-                            let args: Vec<Value> = args_regs.iter().map(|&r| frames[fi].registers[r]).collect();
-                            let res = nf(&ctx, &args)?;
-                            if let Some(d) = dst { frames[fi].registers[d] = res; }
-                            frames[fi].pc += 1;
-                        }
-                        Callable::User(f) => {
-                            let args_regs = &*box_data.args_regs;
-                            if args_regs.len() != f.params_count {
-                                return Err(JitError::runtime(
-                                    format!("Function arity mismatch: expected {}, got {}", f.params_count, args_regs.len()),
-                                    loc.line as usize, loc.col as usize,
-                                ));
-                            }
-                            let ret = dst.map(|d| ReturnTarget { dst: d });
-                            frames[fi].pc += 1;
-                            let callee_regs = build_call_registers(f.locals_count, args_regs, &frames[fi].registers);
-                            frames.push(CallFrame { instructions: InstrPtr::from_arc(&f.instructions), registers: callee_regs, pc: 0, return_to: ret });
-                        }
-                    }
+                    dispatch_callable(&mut frames, &ctx, callable, &box_data.args_regs, dst, loc)?;
+                    frames[fi].pc += 1;
                 }
             }
 

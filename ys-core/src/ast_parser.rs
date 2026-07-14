@@ -32,7 +32,7 @@ impl<'source> AstParser<'source> {
         Ok(Self { stream: TokenStream::new(tokens) })
     }
 
-    // ── Entry point ────────────────────────────────────────────────────────
+    //  Entry point
 
     pub fn parse_program(&mut self) -> Result<AstBlock, JitError> {
         let mut stmts = Vec::new();
@@ -46,7 +46,7 @@ impl<'source> AstParser<'source> {
         Ok(stmts)
     }
 
-    // ── Helpers ────────────────────────────────────────────────────────────
+    //  Helpers
 
     fn loc(&self) -> Loc { self.stream.loc() }
 
@@ -67,6 +67,16 @@ impl<'source> AstParser<'source> {
         }
     }
 
+    /// Parse a `{ … }` block and return its statement list.
+    /// If the result is a single-node block, it is flattened to a `Vec`.
+    fn parse_block_stmts(&mut self) -> Result<AstBlock, JitError> {
+        match self.parse_block()? {
+            AstNode::Block(s, _) => Ok(s),
+            other => Ok(vec![other]),
+        }
+    }
+
+    #[allow(dead_code)]
     fn expect_str(&mut self) -> Result<String, JitError> {
         match self.advance()? {
             Token::String(s) => Ok(unescape_string(s)),
@@ -77,7 +87,7 @@ impl<'source> AstParser<'source> {
         }
     }
 
-    // ── Statement parsing ──────────────────────────────────────────────────
+    //  Statement parsing
 
     /// Parse a single statement. Returns `None` on `}` or EOF (end of block).
     fn parse_statement(&mut self) -> Result<Option<AstNode>, JitError> {
@@ -98,7 +108,7 @@ impl<'source> AstParser<'source> {
                     self.parse_fun_decl(true).map(Some)
                 } else {
                     Err(JitError::parsing(
-                        "expected 'fun' after 'exp'",
+                        "Expected 'fun' declaration after 'exp'",
                         loc.line as usize, loc.col as usize,
                     ))
                 }
@@ -125,6 +135,36 @@ impl<'source> AstParser<'source> {
             Token::While => { self.advance()?; self.parse_while_loop().map(Some) }
             Token::For   => { self.advance()?; self.parse_for_loop().map(Some) }
             Token::Use   => { self.advance()?; self.parse_use_stmt().map(Some) }
+            Token::Error => {
+                self.advance()?;
+                let loc = self.loc();
+                let name = self.expect_ident()?.to_string();
+                self.stream.skip_newlines();
+                if self.peek() == Some(Token::LBrace) {
+                    // error Name { | A | B }
+                    self.advance()?;
+                    let mut variants = Vec::new();
+                    loop {
+                        self.stream.skip_newlines();
+                        if matches!(self.peek(), None | Some(Token::RBrace)) { break; }
+                        self.expect(Token::Pipe)?;
+                        self.stream.skip_newlines();
+                        variants.push(self.expect_ident()?.to_string());
+                        self.stream.skip_newlines();
+                    }
+                    self.expect(Token::RBrace)?;
+                    if variants.is_empty() {
+                        return Err(JitError::parsing(
+                            "error enum must have at least one variant",
+                            loc.line as usize, loc.col as usize,
+                        ));
+                    }
+                    Ok(Some(AstNode::ErrorEnum { name, variants, loc }))
+                } else {
+                    // error Foo
+                    Ok(Some(AstNode::ErrorDecl { name, loc }))
+                }
+            }
             Token::LBrace => { self.advance()?; Ok(Some(self.parse_block()?)) }
             Token::RBrace => Ok(None),
 
@@ -143,7 +183,7 @@ impl<'source> AstParser<'source> {
         }
     }
 
-    // ── Block ──────────────────────────────────────────────────────────────
+    //  Block
 
     fn parse_block(&mut self) -> Result<AstNode, JitError> {
         let loc = self.loc();
@@ -158,7 +198,7 @@ impl<'source> AstParser<'source> {
         Ok(AstNode::Block(stmts, loc))
     }
 
-    // ── Assignment ─────────────────────────────────────────────────────────
+    //  Assignment
 
     /// Determine whether the current identifier starts an assignment.
     /// Peek past type-annotations, dots, and brackets to see if `=` follows.
@@ -228,7 +268,7 @@ impl<'source> AstParser<'source> {
         Ok(Some(AstNode::Assign { target: Box::new(target), value: Box::new(value), loc }))
     }
 
-    // ── Function declaration ───────────────────────────────────────────────
+    //  Function declaration
 
     fn parse_fun_decl(&mut self, exported: bool) -> Result<AstNode, JitError> {
         let loc = self.loc();
@@ -236,19 +276,22 @@ impl<'source> AstParser<'source> {
         self.expect(Token::LParen)?;
         let params = self.parse_params_until(Token::RParen)?;
         self.expect(Token::RParen)?;
-        // Optional return type
+        // Optional return type and error kind
         self.stream.skip_newlines();
+        let mut error_kind = None;
         if self.peek() == Some(Token::Arrow) {
             self.advance()?; // '->'
-            self.expect_ident()?; // return type, ignored
+            self.expect_ident()?; // return type (ignored at runtime)
+            self.stream.skip_newlines();
+            if self.peek() == Some(Token::Not) { // '!' as error kind separator
+                self.advance()?;
+                error_kind = Some(self.expect_ident()?.to_string());
+            }
         }
         self.stream.skip_newlines();
         self.expect(Token::LBrace)?;
-        let body = match self.parse_block()? {
-            AstNode::Block(s, _) => s,
-            other => vec![other],
-        };
-        Ok(AstNode::FunDecl { name, params, body, exported, loc })
+        let body = self.parse_block_stmts()?;
+        Ok(AstNode::FunDecl { name, params, body, exported, loc, error_kind })
     }
 
     fn parse_params_until(&mut self, end: Token<'source>) -> Result<Vec<String>, JitError> {
@@ -263,7 +306,7 @@ impl<'source> AstParser<'source> {
         Ok(params)
     }
 
-    // ── If / else ──────────────────────────────────────────────────────────
+    //  If / else
 
     fn parse_if_stmt(&mut self) -> Result<AstNode, JitError> {
         let loc = self.loc();
@@ -271,10 +314,7 @@ impl<'source> AstParser<'source> {
         let cond = self.parse_expression()?;
         self.stream.skip_newlines();
         self.expect(Token::LBrace)?;
-        let then_block = match self.parse_block()? {
-            AstNode::Block(s, _) => s,
-            other => vec![other],
-        };
+        let then_block = self.parse_block_stmts()?;
         self.stream.skip_newlines();
         let else_block = if self.peek() == Some(Token::Else) {
             self.advance()?; // 'else'
@@ -285,10 +325,7 @@ impl<'source> AstParser<'source> {
             } else {
                 self.stream.skip_newlines();
                 self.expect(Token::LBrace)?;
-                match self.parse_block()? {
-                    AstNode::Block(s, _) => s,
-                    other => vec![other],
-                }
+                self.parse_block_stmts()?
             }
         } else {
             Vec::new()
@@ -296,7 +333,7 @@ impl<'source> AstParser<'source> {
         Ok(AstNode::If { cond: Box::new(cond), then_block, else_block, loc })
     }
 
-    // ── While loop ─────────────────────────────────────────────────────────
+    //  While loop
 
     fn parse_while_loop(&mut self) -> Result<AstNode, JitError> {
         let loc = self.loc();
@@ -304,14 +341,11 @@ impl<'source> AstParser<'source> {
         let cond = self.parse_expression()?;
         self.stream.skip_newlines();
         self.expect(Token::LBrace)?;
-        let body = match self.parse_block()? {
-            AstNode::Block(s, _) => s,
-            other => vec![other],
-        };
+        let body = self.parse_block_stmts()?;
         Ok(AstNode::While { cond: Box::new(cond), body, loc })
     }
 
-    // ── For loop ───────────────────────────────────────────────────────────
+    //  For loop
 
     fn parse_for_loop(&mut self) -> Result<AstNode, JitError> {
         let loc = self.loc();
@@ -321,14 +355,11 @@ impl<'source> AstParser<'source> {
         let iter = self.parse_expression()?;
         self.stream.skip_newlines();
         self.expect(Token::LBrace)?;
-        let body = match self.parse_block()? {
-            AstNode::Block(s, _) => s,
-            other => vec![other],
-        };
+        let body = self.parse_block_stmts()?;
         Ok(AstNode::For { var, iter: Box::new(iter), body, loc })
     }
 
-    // ── Use statement ──────────────────────────────────────────────────────
+    //  Use statement
 
     fn parse_use_stmt(&mut self) -> Result<AstNode, JitError> {
         let loc = self.loc();
@@ -342,7 +373,7 @@ impl<'source> AstParser<'source> {
         Ok(AstNode::Use { path, loc })
     }
 
-    // ── Switch statement ─────────────────────────────────────────────
+    //  Switch statement
 
     fn parse_switch(&mut self) -> Result<AstNode, JitError> {
         let loc = self.loc();
@@ -354,7 +385,7 @@ impl<'source> AstParser<'source> {
         loop {
             self.stream.skip_newlines();
             if matches!(self.peek(), None | Some(Token::RBrace)) { break; }
-            let arm_loc = self.loc();
+            let _arm_loc = self.loc();
             // Parse patterns (value | value | ...)
             let mut patterns = Vec::new();
             if self.peek() == Some(Token::Identifier("_")) {
@@ -373,11 +404,7 @@ impl<'source> AstParser<'source> {
             // Body: either a block or an expression
             self.stream.skip_newlines();
             let body = if self.peek() == Some(Token::LBrace) {
-                let block = self.parse_block()?;
-                match block {
-                    AstNode::Block(s, _) => s,
-                    other => vec![other],
-                }
+                self.parse_block_stmts()?
             } else {
                 vec![self.parse_expression()?]
             };
@@ -387,7 +414,7 @@ impl<'source> AstParser<'source> {
         Ok(AstNode::Switch { expr: Box::new(expr), arms, loc })
     }
 
-    // ── Async function ─────────────────────────────────────────────
+    //  Async function
 
     fn parse_async_fun(&mut self) -> Result<AstNode, JitError> {
         let loc = self.loc();
@@ -401,10 +428,7 @@ impl<'source> AstParser<'source> {
             self.expect_ident()?;
         }
         self.expect(Token::LBrace)?;
-        let body = match self.parse_block()? {
-            AstNode::Block(s, _) => s,
-            other => vec![other],
-        };
+        let body = self.parse_block_stmts()?;
         Ok(AstNode::AsyncFun { name, params, body, loc })
     }
 
@@ -413,10 +437,58 @@ impl<'source> AstParser<'source> {
     // ══════════════════════════════════════════════════════════════════════
 
     fn parse_expression(&mut self) -> Result<AstNode, JitError> {
-        self.parse_range_expr()
+        self.parse_fallthrough_expr()
     }
 
-    // ── Range `..` (lowest‑precedence binary) ─────────────────────────
+    // ── Fallthrough (or / except) — lowest precedence
+
+    fn parse_fallthrough_expr(&mut self) -> Result<AstNode, JitError> {
+        let lhs = self.parse_range_expr()?;
+        let loc = self.loc();
+
+        // `or` — inline fallback for failures (disambiguates from boolean
+        // `or` at runtime via TAG_FAILURE — here it's the same token)
+        if self.peek() == Some(Token::Or) {
+            self.advance()?;
+            let rhs = self.parse_fallthrough_expr()?;
+            return Ok(AstNode::Fallback { expr: Box::new(lhs), default: Box::new(rhs), loc });
+        }
+
+        // `except` — pattern matching on failure types
+        if self.peek() == Some(Token::Except) {
+            self.advance()?;
+            self.stream.skip_newlines();
+            self.expect(Token::LBrace)?;
+            let mut arms = Vec::new();
+            loop {
+                self.stream.skip_newlines();
+                if matches!(self.peek(), None | Some(Token::RBrace)) { break; }
+                self.expect(Token::Pipe)?;
+                self.stream.skip_newlines();
+                let type_name = if self.peek() == Some(Token::Identifier("_")) {
+                    self.advance()?;
+                    String::new()
+                } else {
+                    self.expect_ident()?.to_string()
+                };
+                self.stream.skip_newlines();
+                self.expect(Token::Arrow)?;
+                self.stream.skip_newlines();
+                let body = if self.peek() == Some(Token::LBrace) {
+                    self.parse_block_stmts()?
+                } else {
+                    vec![self.parse_expression()?]
+                };
+                arms.push(ExceptArm { type_name, body });
+            }
+            self.expect(Token::RBrace)?;
+            return Ok(AstNode::Except { expr: Box::new(lhs), arms, loc });
+        }
+
+        Ok(lhs)
+    }
+
+    //  Range `..` (lowest‑precedence binary)
 
     fn parse_range_expr(&mut self) -> Result<AstNode, JitError> {
         let lhs = self.parse_or_expr()?;
@@ -457,7 +529,7 @@ impl<'source> AstParser<'source> {
         }
     }
 
-    // ── or (short-circuit) ──────────────────────────────────────────────
+    //  or (short-circuit)
 
     fn parse_or_expr(&mut self) -> Result<AstNode, JitError> {
         let mut lhs = self.parse_and_expr()?;
@@ -470,7 +542,7 @@ impl<'source> AstParser<'source> {
         Ok(lhs)
     }
 
-    // ── and (short-circuit) ─────────────────────────────────────────────
+    //  and (short-circuit)
 
     fn parse_and_expr(&mut self) -> Result<AstNode, JitError> {
         let mut lhs = self.parse_comp_expr()?;
@@ -483,7 +555,7 @@ impl<'source> AstParser<'source> {
         Ok(lhs)
     }
 
-    // ── Comparisons ────────────────────────────────────────────────────
+    //  Comparisons
 
     fn parse_comp_expr(&mut self) -> Result<AstNode, JitError> {
         let mut lhs = self.parse_add_expr()?;
@@ -509,7 +581,7 @@ impl<'source> AstParser<'source> {
         Ok(lhs)
     }
 
-    // ── Additive ───────────────────────────────────────────────────────
+    //  Additive
 
     fn parse_add_expr(&mut self) -> Result<AstNode, JitError> {
         let mut lhs = self.parse_mul_expr()?;
@@ -530,7 +602,7 @@ impl<'source> AstParser<'source> {
         Ok(lhs)
     }
 
-    // ── Multiplicative ─────────────────────────────────────────────────
+    //  Multiplicative
 
     fn parse_mul_expr(&mut self) -> Result<AstNode, JitError> {
         let mut lhs = self.parse_unary_expr()?;
@@ -555,7 +627,7 @@ impl<'source> AstParser<'source> {
         Ok(lhs)
     }
 
-    // ── Unary ──────────────────────────────────────────────────────────
+    //  Unary
 
     fn parse_unary_expr(&mut self) -> Result<AstNode, JitError> {
         let loc = self.loc();
@@ -568,11 +640,21 @@ impl<'source> AstParser<'source> {
                 let expr = self.parse_unary_expr()?;
                 Ok(AstNode::Unary { op: UnaryOp::Neg, expr: Box::new(expr), loc })
             }
+            Some(Token::Fail) => {
+                self.advance()?;
+                let mut path = vec![self.expect_ident()?.to_string()];
+                while self.peek() == Some(Token::Dot) {
+                    self.advance()?;
+                    path.push(self.expect_ident()?.to_string());
+                }
+                let type_name = path.join(".");
+                Ok(AstNode::Fail { type_name, loc })
+            }
             _ => self.parse_postfix_expr(),
         }
     }
 
-    // ── Postfix (calls, indexing, field access, ranges) ────────────────
+    //  Postfix (calls, indexing, field access, ranges)
 
     fn parse_postfix_expr(&mut self) -> Result<AstNode, JitError> {
         let mut left = self.parse_primary()?;
@@ -630,7 +712,7 @@ impl<'source> AstParser<'source> {
         Ok(left)
     }
 
-    // ── Primary expressions ───────────────────────────────────────────
+    //  Primary expressions
 
     fn parse_primary(&mut self) -> Result<AstNode, JitError> {
         let loc = self.loc();
@@ -669,7 +751,7 @@ impl<'source> AstParser<'source> {
         }
     }
 
-    // ── List literal ───────────────────────────────────────────────────
+    //  List literal
 
     fn parse_list_lit(&mut self, loc: Loc) -> Result<AstNode, JitError> {
         self.stream.skip_newlines();
@@ -707,7 +789,7 @@ impl<'source> AstParser<'source> {
         Ok(AstNode::ListLit(elems, loc))
     }
 
-    // ── Object literal ────────────────────────────────────────────────
+    //  Object literal
 
     fn parse_object_lit(&mut self, loc: Loc) -> Result<AstNode, JitError> {
         let mut fields = Vec::new();
@@ -731,7 +813,7 @@ impl<'source> AstParser<'source> {
         Ok(AstNode::ObjectLit(fields, loc))
     }
 
-    // ── Closure ───────────────────────────────────────────────────────
+    //  Closure
 
     fn parse_closure(&mut self, is_move: bool, loc: Loc) -> Result<AstNode, JitError> {
         let params = self.parse_params_until(Token::Pipe)?;
@@ -745,7 +827,7 @@ impl<'source> AstParser<'source> {
         Ok(AstNode::Closure { params, body: Box::new(body), is_move, loc })
     }
 
-    // ── Template literals ─────────────────────────────────────────────
+    //  Template literals
 
     fn parse_template(&self, s: &'source str, loc: Loc) -> Result<AstNode, JitError> {
         // Templates are handled the same way as the existing parser.
@@ -753,7 +835,7 @@ impl<'source> AstParser<'source> {
         Ok(AstNode::Str(s.to_string(), loc))
     }
 
-    // ── Call args ─────────────────────────────────────────────────────
+    //  Call args
 
     fn parse_call_args(&mut self) -> Result<Vec<AstNode>, JitError> {
         let mut args = Vec::new();

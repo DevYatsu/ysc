@@ -14,12 +14,11 @@
 
 use std::sync::Arc;
 use crate::context::{Callable, Context};
-use crate::heap::{ManagedObject, SyncCell};
 use crate::vm::execute_bytecode;
-use ys_core::compiler::{Loc, Value};
+use ys_core::compiler::Value;
 use ys_core::error::JitError;
 
-// ── Value type name (for error messages) ──────────────────────────────────────
+//  Value type name (for error messages)
 
 /// Return a human-readable type name for a Value (like Lua's `type()`).
 pub fn value_type_name(val: &Value) -> &'static str {
@@ -40,7 +39,7 @@ pub fn bad_arg(idx: usize, func_name: &str, expected: &str, got: &Value) -> JitE
     )
 }
 
-// ── FromLua / ToLua ───────────────────────────────────────────────────────────
+//  FromLua / ToLua
 
 /// Types that can be created from a YatsuScript [`Value`].
 pub trait FromLua: Sized {
@@ -58,7 +57,7 @@ pub trait FromLuaSlice: Sized {
     fn from_lua_slice(args: &[Value], func_name: &str, ctx: &Context) -> Result<Self, JitError>;
 }
 
-// ── FromLuaSlice implementations for tuples ────────────────────────────────────
+//  FromLuaSlice implementations for tuples
 
 impl<A: FromLua> FromLuaSlice for (A,) {
     fn from_lua_slice(args: &[Value], func_name: &str, ctx: &Context) -> Result<Self, JitError> {
@@ -104,7 +103,7 @@ impl<A: FromLua, B: FromLua, C: FromLua> FromLuaSlice for (A, B, C) {
     }
 }
 
-// ── Implementations for primitive types ────────────────────────────────────────
+//  Implementations for primitive types
 
 impl FromLua for f64 {
     fn from_lua(val: Value, _ctx: &Context) -> Result<Self, JitError> {
@@ -171,14 +170,14 @@ impl ToLua for Value {
     }
 }
 
-// ── Native function type ──────────────────────────────────────────────────────
+//  Native function type
 
 /// A native callback that receives the context and arguments.
 ///
 /// Return the result via `Ok(Value::number(...))` etc.
 pub type NativeCallback = Arc<dyn Fn(&Context, &[Value]) -> Result<Value, JitError> + Send + Sync>;
 
-// ── Yatsu ───────────────────────────────────────────────────────────────────────
+//  Yatsu
 
 /// High‑level embedding API for YatsuScript, inspired by `mlua`.
 pub struct Yatsu {
@@ -197,7 +196,7 @@ impl Yatsu {
         }
     }
 
-    // ── Code execution ─────────────────────────────────────────────────────
+    //  Code execution
 
     /// Compile and execute a source string, returning the result as `R`.
     ///
@@ -223,9 +222,7 @@ impl Yatsu {
         }
 
         // Execute the program's main bytecode
-        // The program's string pool is used for name resolution
-        let string_pool = program.string_pool.clone();
-        let mut registers = vec![Value::from_bits(0); program.locals_count];
+        let registers = vec![Value::from_bits(0); program.locals_count];
         let result = execute_bytecode(
             &program.instructions,
             Arc::clone(&self.ctx),
@@ -236,7 +233,7 @@ impl Yatsu {
         R::from_lua(result, &self.ctx)
     }
 
-    // ── Global variable access ──────────────────────────────────────────────
+    //  Global variable access
 
     /// Set a global variable from Rust.
     ///
@@ -282,7 +279,7 @@ impl Yatsu {
         }
     }
 
-    // ── Function registration ───────────────────────────────────────────────
+    //  Function registration
 
     /// Register a Rust function that can be called from scripts.
     ///
@@ -332,7 +329,7 @@ impl Yatsu {
         });
     }
 
-    // ── Module system ─────────────────────────────────────────────────────────
+    //  Module system
 
     /// Register a module containing multiple named functions.
     ///
@@ -432,9 +429,9 @@ impl ModuleBuilder {
 }
 
 impl Yatsu {
-    // ── Helpers ─────────────────────────────────────────────────────────────
+    //  Helpers
 
-    fn ensure_global(&self, name: &str) -> usize {
+    fn ensure_global(&self, _name: &str) -> usize {
         let globals = self.ctx.globals.get_mut();
         // Check existing globals by name — we use a simple linear scan
         // since globals count is typically small (<100)
@@ -445,7 +442,7 @@ impl Yatsu {
         idx
     }
 
-    fn find_global(&self, name: &str) -> Option<usize> {
+    fn find_global(&self, _name: &str) -> Option<usize> {
         // We don't have a name→index map for globals yet
         // This is a placeholder — in real usage, we'd track this
         None

@@ -5,7 +5,7 @@ use rustc_hash::FxHashMap;
 
 use ys_core::error::JitError;
 
-//  Backend trait 
+//  Backend trait
 
 /// An execution backend for compiled YatsuScript programs.
 ///
@@ -16,7 +16,7 @@ pub trait Backend: Send + Sync {
     fn run(&self, program: ys_core::compiler::Program) -> Result<(), JitError>;
 }
 
-// ── Shared Execution State ───────────────────────────────────────────────────
+//  Shared Execution State
 
 /// Store for native function implementations.
 /// Synchronous native function — no async overhead.
@@ -107,13 +107,12 @@ impl Context {
     ///
     /// This is the primary API for embedding YatsuScript in games and apps.
     pub fn register_sync(&mut self, name: &str, f: impl Fn(&Arc<Context>, &[Value]) -> Result<Value, JitError> + Send + Sync + 'static) {
-        let nf: NativeFn = Arc::new(f);
-        self.callables_by_name.get_mut().insert(name.to_string(), Callable::Native(Arc::clone(&nf)));
+        self.callables_by_name.get_mut().insert(name.to_string(), Callable::Native(Arc::new(f)));
     }
 
     /// Try to read a value as a string (SSO, heap, or string pool).
     pub fn value_as_string(&self, v: Value) -> Option<String> {
-        if let Some(s) = v.as_sso_str() { 
+        if let Some(s) = v.as_sso_str() {
             return std::str::from_utf8(&s).ok().map(|s| s.to_string());
         }
         // Pool strings have their own tag to avoid ID collision with heap objects.
@@ -138,7 +137,7 @@ impl Context {
         if let Some(oid) = v.as_obj_id() { return Some(oid); }
         if let Some(s) = v.as_sso_str() {
             let s_str = std::str::from_utf8(&s).ok()?;
-            return self.string_pool.iter().position(|p| &**p == s_str).map(|i| i as u32);
+            return self.string_pool.iter().position(|p| p.as_ref() == s_str).map(|i| i as u32);
         }
         None
     }
