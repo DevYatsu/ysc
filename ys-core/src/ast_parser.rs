@@ -237,7 +237,8 @@ impl<'source> AstParser<'source> {
                     }
                 }
                 Token::Dot => p += 1,
-                Token::Equals => return true,
+                Token::Equals | Token::PlusEq | Token::MinusEq
+                    | Token::MulEq | Token::DivEq | Token::ModEq => return true,
                 _ => return false,
             }
         }
@@ -268,8 +269,23 @@ impl<'source> AstParser<'source> {
                 _ => break,
             }
         }
-        self.expect(Token::Equals)?;
-        let value = self.parse_expression()?;
+        // Determine the assignment operator type
+        let op = match self.peek() {
+            Some(Token::Equals) => { self.advance()?; None }
+            Some(Token::PlusEq)  => { self.advance()?; Some(BinOp::Add) }
+            Some(Token::MinusEq) => { self.advance()?; Some(BinOp::Sub) }
+            Some(Token::MulEq)   => { self.advance()?; Some(BinOp::Mul) }
+            Some(Token::DivEq)   => { self.advance()?; Some(BinOp::Div) }
+            Some(Token::ModEq)   => { self.advance()?; Some(BinOp::Mod) }
+            _ => return Err(JitError::parsing("Expected assignment operator", loc.line as usize, loc.col as usize)),
+        };
+        let rhs = self.parse_expression()?;
+        let value = if let Some(bop) = op {
+            // x += y  →  x = x + y
+            AstNode::Binary { op: bop, lhs: Box::new(target.clone()), rhs: Box::new(rhs), loc }
+        } else {
+            rhs
+        };
         Ok(Some(AstNode::Assign { target: Box::new(target), value: Box::new(value), loc }))
     }
 

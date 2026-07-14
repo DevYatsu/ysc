@@ -90,8 +90,13 @@ impl<'source> TokenStream<'source> {
             Ok(td.token)
         } else {
             let loc = self.loc();
+            let msg = if loc.line > 0 {
+                format!("Unexpected EOF — reached end of file with unclosed blocks or expressions")
+            } else {
+                "Unexpected EOF — empty source or all tokens skipped".to_string()
+            };
             Err(JitError::parsing(
-                "Unexpected EOF",
+                msg,
                 loc.line as usize,
                 loc.col as usize,
             ))

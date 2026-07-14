@@ -185,21 +185,36 @@ pub enum Token<'source> {
     /// '.' operator for object property access.
     #[token(".")]
     Dot,
+    /// '+=' compound assignment (before '+').
+    #[token("+=")]
+    PlusEq,
     /// '+' operator.
     #[token("+")]
     Plus,
+    /// '-=' compound assignment (before '-').
+    #[token("-=")]
+    MinusEq,
     /// '->' arrow for return type annotations (before '-').
     #[token("->")]
     Arrow,
     /// '-' operator.
     #[token("-")]
     Minus,
+    /// '*=' compound assignment (before '*').
+    #[token("*=")]
+    MulEq,
     /// '*' operator.
     #[token("*")]
     Mul,
+    /// '/=' compound assignment (before '/').
+    #[token("/=")]
+    DivEq,
     /// '/' operator.
     #[token("/")]
     Div,
+    /// '%=' compound assignment (before '%').
+    #[token("%=")]
+    ModEq,
     /// '%' modulus operator.
     #[token("%")]
     Mod,

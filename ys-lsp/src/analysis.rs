@@ -70,6 +70,7 @@ pub fn analyze_source(source: &str) -> AnalysisResults {
                     Token::Identifier(_) => LspTokenVariant::Variable,
                     
                     Token::Plus | Token::Minus | Token::Mul | Token::Div | Token::Mod
+                    | Token::PlusEq | Token::MinusEq | Token::MulEq | Token::DivEq | Token::ModEq
                     | Token::Eq | Token::Ne | Token::Lt | Token::Le 
                     | Token::Gt | Token::Ge | Token::Not | Token::Dot | Token::Range 
                         => LspTokenVariant::Operator,

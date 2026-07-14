@@ -148,6 +148,28 @@ fn parse_error_hints(msg: &str, loc: &ErrorLoc, source: &str) -> Vec<Hint> {
         ];
     }
 
+    // ── Unexpected EOF — check for unclosed blocks ────
+    if msg.contains("Unexpected EOF") {
+        let mut hints = Vec::new();
+        let open_b = source.matches('{').count();
+        let close_b = source.matches('}').count();
+        let open_p = source.matches('(').count();
+        let close_p = source.matches(')').count();
+        if open_b > close_b {
+            hints.push(Hint { message: format!("reached end of file with unclosed blocks ({} `{{` vs {} `}}`)", open_b, close_b), kind: HintKind::Help });
+            hints.push(Hint { message: "add a matching '}' to close each open block".into(), kind: HintKind::Help });
+        }
+        if open_p > close_p {
+            hints.push(Hint { message: format!("reached end of file with unclosed parentheses ({} `(` vs {} `)`)", open_p, close_p), kind: HintKind::Help });
+            hints.push(Hint { message: "add a matching ')'".into(), kind: HintKind::Help });
+        }
+        if hints.is_empty() {
+            hints.push(Hint { message: "the source ended while the parser was still expecting more tokens".into(), kind: HintKind::Note });
+            hints.push(Hint { message: "check for missing closing braces '}', parentheses ')', or keywords".into(), kind: HintKind::Help });
+        }
+        return hints;
+    }
+
     vec![]
 }
 
