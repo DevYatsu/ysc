@@ -9,6 +9,13 @@ use std::sync::Arc;
 use ys_core::compiler::Value;
 use ys_core::error::JitError;
 
+/// Get the source location of the current `print()` call, if available.
+fn print_loc_str() -> String {
+    crate::vm::get_call_loc()
+        .map(|(line, _)| format!(" [l.{}]", line))
+        .unwrap_or_default()
+}
+
 // ═══════════════════════════════════════════════════════════════
 //  Native target — print() goes straight to stdout, zero overhead
 // ═══════════════════════════════════════════════════════════════
@@ -65,6 +72,10 @@ pub fn take_print_buf() -> Vec<u8> {
 pub fn register(fns: &mut FxHashMap<String, NativeFn>) {
     fns.insert("print".into(), Arc::new(|ctx, args| {
         let mut buf = PRINT_BUF.lock().unwrap();
+        let loc = print_loc_str();
+        if !loc.is_empty() {
+            buf.extend_from_slice(loc.as_bytes());
+        }
         for (i, val) in args.iter().enumerate() {
             if i > 0 { buf.push(b' '); }
             buf.extend_from_slice(stringify_value(ctx.as_ref(), *val).as_bytes());

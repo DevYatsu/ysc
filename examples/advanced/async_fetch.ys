@@ -2,13 +2,13 @@
 // `await fetch(url)` pauses until the response arrives.
 
 print("=== Sequential fetches ===")
-let t1 = time()
+t1 = time()
 
-let a = await fetch("https://example.com")
+a = await fetch("https://example.com")
 print("Got response 1: " + str(len(a)) + " bytes")
 
-let b = await fetch("https://example.com")
+b = await fetch("https://example.com")
 print("Got response 2: " + str(len(b)) + " bytes")
 
-let t2 = time()
+t2 = time()
 print("Total: " + str(t2 - t1) + " seconds")

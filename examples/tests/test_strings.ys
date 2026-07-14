@@ -34,7 +34,7 @@ print("hello".replace("l", "L"))          // heLLo
 
 // .split()
 print("split:")
-let parts = "a,b,c".split(",")
+parts = "a,b,c".split(",")
 print(len(parts))                         // 3
 print(parts[0])                           // a
 print(parts[1])                           // b
@@ -70,7 +70,7 @@ print("x".is_empty())                     // false
 
 // .chars()
 print("chars:")
-let cs = "ab".chars()
+cs = "ab".chars()
 print(len(cs))                            // 2
 print(cs[0])                              // a
 print(cs[1])                              // b

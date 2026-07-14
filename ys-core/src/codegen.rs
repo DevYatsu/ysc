@@ -200,16 +200,13 @@ impl Codegen {
             }
 
             //  Variables
-            AstNode::Ident(name, _) => {
+            AstNode::Ident(name, loc) => {
                 if let Some(info) = self.get_var(name) {
                     Ok(self.load_var(info))
                 } else {
-                    // Unknown identifier → string literal
-                    let dst = self.alloc_reg();
-                    let val = Value::sso(name)
-                        .unwrap_or_else(|| Value::pool(self.intern(name)));
-                    self.emit(Instruction::LoadLiteral { dst, val });
-                    Ok(dst)
+                    // Unknown identifier — check for similar names and error
+                    let msg = format!("'{}' is not defined", name);
+                    Err(JitError::unknown_variable(msg, loc.line as usize, loc.col as usize))
                 }
             }
 

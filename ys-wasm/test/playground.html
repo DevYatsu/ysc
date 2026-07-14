@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>YatsuScript Playground</title>
+<link rel="icon" href="data:,">
+
+<!-- Monaco Editor from CDN -->
+<link rel="stylesheet" data-name="vs/editor/editor.min.css"
+      href="https://cdn.jsdelivr.net/npm/monaco-editor@0.52.0/min/vs/editor/editor.min.css">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, -apple-system, sans-serif; background: #1e1e1e; color: #ccc; height: 100vh; display: flex; flex-direction: column; }
+
+  header {
+    display: flex; align-items: center; gap: 1rem;
+    padding: 0.75rem 1.25rem; background: #2d2d2d; border-bottom: 1px solid #444;
+  }
+  header h1 { font-size: 1.2rem; font-weight: 600; color: #e0e0e0; }
+  header h1 span { color: #569cd6; }
+  header .subtitle { font-size: 0.8rem; color: #888; margin-left: auto; }
+
+  .main { display: flex; flex: 1; overflow: hidden; }
+  .editor-pane { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  .output-pane {
+    width: 380px; min-width: 280px; display: flex; flex-direction: column;
+    border-left: 1px solid #444; background: #1a1a2e;
+  }
+
+  #editor-container { flex: 1; }
+  #output { flex: 1; overflow: auto; padding: 1rem; font-family: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', Consolas, monospace; font-size: 13px; white-space: pre-wrap; line-height: 1.5; }
+
+  .toolbar {
+    display: flex; align-items: center; gap: 0.5rem;
+    padding: 0.5rem 1rem; background: #252526; border-bottom: 1px solid #444;
+  }
+  .toolbar button {
+    padding: 6px 18px; font-size: 13px; font-weight: 600;
+    border: none; border-radius: 4px; cursor: pointer;
+    background: #0e639c; color: #fff;
+  }
+  .toolbar button:hover { background: #1177bb; }
+  .toolbar button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .toolbar button.run { background: #1b7a1b; }
+  .toolbar button.run:hover { background: #228b22; }
+  .toolbar .status { font-size: 12px; color: #888; margin-left: auto; }
+
+  .output-header {
+    padding: 0.5rem 1rem; font-size: 12px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.05em;
+    color: #888; background: #252526; border-bottom: 1px solid #444;
+  }
+  .output-content { flex: 1; overflow: auto; }
+  #timing { color: #6a9955; font-size: 12px; margin-top: 0.5rem; }
+  .error-text { color: #f48771; }
+  .ok-text { color: #d4d4d4; }
+  .line-ref { color: #6a9955; font-size: 11px; }
+
+  @media (max-width: 800px) {
+    .main { flex-direction: column; }
+    .output-pane { width: 100%; border-left: none; border-top: 1px solid #444; height: 40%; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1><span>Yatsu</span>Script</h1>
+  <span class="subtitle">Interactive Playground</span>
+</header>
+
+<div class="main">
+  <div class="editor-pane">
+    <div class="toolbar">
+      <button class="run" id="runBtn" disabled>▶ Run</button>
+      <button id="resetBtn">↺ Reset</button>
+      <span class="status" id="status">Loading WASM…</span>
+    </div>
+    <div id="editor-container"></div>
+  </div>
+
+  <div class="output-pane">
+    <div class="output-header">Output</div>
+    <div class="output-content">
+      <pre id="output">Welcome to YatsuScript!
+
+Write code in the editor and press ▶ Run.</pre>
+      <div id="timing"></div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.52.0/min/vs/loader.js"></script>
+<script>
+// ── Monarch tokenizer: YatsuScript syntax highlighting ──────────
+const yatsuLanguage = {
+  defaultToken: '',
+  tokenPostfix: '.ys',
+  ignoreCase: false,
+
+  keywords: [
+    'fun', 'ret', 'if', 'else', 'for', 'while', 'in',
+    'and', 'or', 'not', 'nil', 'true', 'false',
+    'async', 'await', 'exp', 'use', 'switch',
+    'break', 'move', 'except', 'fail', 'error', 'yield',
+  ],
+
+  typeKeywords: [],
+
+  operators: [
+    '+', '-', '*', '/', '%', '==', '!=', '<', '<=', '>', '>=',
+    '=', ':', '..', '->', '|', '!', ',', ';', '.',
+  ],
+
+  symbols: /[=><!~?:&|+\-*\/\^%]+/,
+  escapes: /\\(?:[abfnrtv\\"']|x[0-9A-Fa-f]{1,4}|u[0-9A-Fa-f]{4}|U[0-9A-Fa-f]{8})/,
+
+  tokenizer: {
+    root: [
+      // Comments
+      [/\/\/.*$/, 'comment'],
+      [/#.*$/, 'comment'],
+
+      // Strings
+      [/"/, { token: 'string.quote', bracket: '@open', next: '@string' }],
+
+      // Numbers
+      [/\d+[eE][+-]?\d+/, 'number.float'],
+      [/\d+\.\d+([eE][+-]?\d+)?/, 'number.float'],
+      [/\d+/, 'number'],
+
+      // Identifiers and keywords
+      [/[a-zA-Z_$][\w$]*/, {
+        cases: {
+          '@keywords': 'keyword',
+          '@default': 'identifier'
+        }
+      }],
+
+      // Operators
+      [/[{}()\[\]]/, '@brackets'],
+      [/[.]/, 'delimiter'],
+      [/[;,.]/, 'delimiter'],
+      [/@symbols/, { cases: { '@operators': 'operator', '@default': '' } }],
+
+      // Whitespace
+      { include: '@whitespace' },
+    ],
+
+    comment: [
+      [/[^/*]+/, 'comment'],
+      [/\*\//, 'comment', '@pop'],
+      [/[/*]/, 'comment'],
+    ],
+
+    string: [
+      [/[^\\"]+/, 'string'],
+      [/@escapes/, 'string.escape'],
+      [/\\./, 'string.escape.invalid'],
+      [/"/, { token: 'string.quote', bracket: '@close', next: '@pop' }],
+    ],
+
+    whitespace: [
+      [/[ \t\r\n]+/, 'white'],
+    ],
+  },
+};
+
+// ═══════════════════════════════════════════════════════════════
+//  Default sample code
+// ═══════════════════════════════════════════════════════════════
+const DEFAULT_SOURCE = `// YatsuScript — interactive demo
+
+fun fib(n) {
+  if n < 2 {
+    ret n
+  } else {
+    ret fib(n - 1) + fib(n - 2)
+  }
+}
+
+print("fib(10) = " + str(fib(10)))
+
+// String methods
+print("hello".upper())
+print("a,b,c".split(","))
+
+// Object iteration — bracket access by string key
+obj = {name: "Alice", age: 30, city: "Paris"}
+for k in obj {
+  print(k + ": " + str(obj[k]))
+}
+
+// Range iteration
+sum = 0
+for i in 0..10 {
+  sum = sum + i
+}
+print("sum 0..9 = " + str(sum))
+`;
+
+// ═══════════════════════════════════════════════════════════════
+//  Bootstrap
+// ═══════════════════════════════════════════════════════════════
+const $output = document.getElementById('output');
+const $timing = document.getElementById('timing');
+const $runBtn = document.getElementById('runBtn');
+const $resetBtn = document.getElementById('resetBtn');
+const $status = document.getElementById('status');
+
+let editor;
+let wasmEval;
+
+require.config({
+  paths: { vs: 'https://cdn.jsdelivr.net/npm/monaco-editor@0.52.0/min/vs' }
+});
+
+require(['vs/editor/editor.main'], async function () {
+  // Register YatsuScript language
+  monaco.languages.register({ id: 'yatsuscript' });
+  monaco.languages.setMonarchTokensProvider('yatsuscript', yatsuLanguage);
+  // Create editor
+  editor = monaco.editor.create(document.getElementById('editor-container'), {
+    value: DEFAULT_SOURCE,
+    language: 'yatsuscript',
+    theme: 'vs-dark',
+    fontSize: 14,
+    lineNumbers: 'on',
+    minimap: { enabled: false },
+    scrollBeyondLastLine: false,
+    automaticLayout: true,
+    tabSize: 2,
+    wordWrap: 'on',
+  });
+
+  // ── Autocomplete ────────────────────────────────────
+  monaco.languages.registerCompletionItemProvider('yatsuscript', {
+    provideCompletionItems: (model, position) => {
+      const word = model.getWordUntilPosition(position);
+      const range = {
+        startLineNumber: position.lineNumber,
+        endLineNumber: position.lineNumber,
+        startColumn: word.startColumn,
+        endColumn: word.endColumn,
+      };
+      const kw = ['fun','ret','if','else','for','while','in','and','or','not',
+        'nil','true','false','async','await','exp','use','switch',
+        'break','move','except','fail','error','yield'];
+      const builtins = [
+        {label:'print', detail:'print(...values) — output values'},
+        {label:'str', detail:'str(value) — convert to string'},
+        {label:'len', detail:'len(value) — length of string/list/object'},
+        {label:'time', detail:'time() — current timestamp'},
+        {label:'sleep', detail:'sleep(ms) — pause execution'},
+        {label:'fetch', detail:'fetch(url) — HTTP GET'},
+        {label:'spawn', detail:'spawn(fn, ...) — spawn function'},
+      ];
+      const strM = ['len','upper','lower','trim','starts_with','ends_with','contains',
+        'replace','split','repeat','slice','index_of','to_number','is_empty','chars'];
+      const numM = ['to_string','ceil','floor','round','abs','sqrt','pow','is_integer','to_int'];
+      const objM = ['keys','values','entries','has'];
+      const listM = ['map','filter','reduce','each','find','some','every','flat_map',
+        'includes','index_of','sorted','reversed','slice','concat','flatten','take','drop','unique'];
+
+      return {
+        suggestions: [
+          ...kw.map(k => ({ label: k, kind: monaco.languages.CompletionItemKind.Keyword, insertText: k, range })),
+          ...builtins.map(f => ({ label: f.label, kind: monaco.languages.CompletionItemKind.Function, insertText: f.label, detail: f.detail, range })),
+          ...strM.map(m => ({ label: m, kind: monaco.languages.CompletionItemKind.Method, insertText: m, detail: `string.${m}()`, range })),
+          ...numM.map(m => ({ label: m, kind: monaco.languages.CompletionItemKind.Method, insertText: m, detail: `number.${m}()`, range })),
+          ...objM.map(m => ({ label: m, kind: monaco.languages.CompletionItemKind.Method, insertText: m, detail: `object.${m}()`, range })),
+          ...listM.map(m => ({ label: m, kind: monaco.languages.CompletionItemKind.Method, insertText: m, detail: `list.${m}()`, range })),
+        ]
+      };
+    },
+  });
+
+  // ── Hover provider ──────────────────────────────────
+  monaco.languages.registerHoverProvider('yatsuscript', {
+    provideHover: (model, position) => {
+      const w = model.getWordAtPosition(position);
+      if (!w) return null;
+      const docs = {
+        'fun': 'Declare a function.\n\n```ys\nfun name(params) { body }\n```',
+        'ret': 'Return a value.\n\n```ys\nret expression\n```',
+        'if': 'Conditional branch.\n\n```ys\nif cond { ... } else { ... }\n```',
+        'for': 'Loop over an iterable.\n\n```ys\nfor var in iterable { ... }\n```',
+        'while': 'Loop while condition is true.',
+        'print': 'Output values to stdout.\n\n```ys\nprint("hello", 42)\n```',
+        'str': 'Convert any value to string.\n\n```ys\nstr(42) → "42"\n```',
+        'len': 'Get length of string, list, or object.\n\n```ys\nlen("hi") → 2\n```',
+        'yield': 'Generator function keyword (future).',
+      };
+      if (docs[w.word]) return { contents: [{ value: docs[w.word] }] };
+      return null;
+    },
+  });
+
+  // ── Load WASM ────────────────────────────────────────
+  try {
+    const wasm = await import('../pkg/ys_wasm.js');
+    await wasm.default();
+    wasmEval = wasm._eval;
+    $status.textContent = 'Ready';
+    $runBtn.disabled = false;
+  } catch (e) {
+    $status.textContent = 'WASM failed to load';
+    $output.textContent = 'Error loading WASM module: ' + e.message;
+    console.error(e);
+  }
+});
+
+// Run the current code
+function runCode() {
+  if (!wasmEval || !editor) return;
+
+  const source = editor.getValue();
+  $output.textContent = 'Running…';
+  $timing.textContent = '';
+
+  const t0 = performance.now();
+
+  try {
+    const result = wasmEval(source);
+    const elapsed = ((performance.now() - t0) / 1000).toFixed(4);
+
+    // Check for errors — the WASM module prefixes errors with "ERROR:"
+    const errorIdx = result.lastIndexOf('ERROR:');
+    if (errorIdx >= 0) {
+      const output = result.slice(0, errorIdx).trimEnd();
+      const error = result.slice(errorIdx + 6);
+      let html = '';
+      if (output) {
+        html += formatOutput(output);
+      }
+      html += '<span class="error-text">' + escapeHtml(error) + '</span>';
+      $output.innerHTML = html;
+    } else if (result === 'ok') {
+      $output.innerHTML = ''; // no output
+    } else {
+      $output.innerHTML = formatOutput(result);
+    }
+    $timing.textContent = 'Completed in ' + elapsed + 's';
+  } catch (e) {
+    $output.innerHTML = '<span class="error-text">' + escapeHtml('Error: ' + e.message) + '</span>';
+  }
+}
+
+function resetCode() {
+  if (editor) editor.setValue(DEFAULT_SOURCE);
+}
+
+function escapeHtml(str) {
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// Format print output with line number markers [l.N] on the left
+function formatOutput(str) {
+  return str.split('\n').map(line => {
+    // Match [l.N] at the START of a line
+    const match = line.match(/^\[l\.(\d+)\]\s*(.*)$/);
+    if (match) {
+      const lineNum = match[1];
+      const value = escapeHtml(match[2]);
+      return `<span class="line-ref">[l.${lineNum}]</span> <span class="ok-text">${value}</span>`;
+    }
+    return '<span class="ok-text">' + escapeHtml(line) + '</span>';
+  }).join('\n');
+}
+
+// Event handlers
+$runBtn.onclick = runCode;
+$resetBtn.onclick = resetCode;
+
+// Keyboard shortcut: Ctrl/Cmd+Enter to run
+document.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+    e.preventDefault();
+    runCode();
+  }
+});
+
+// Go
+init();
+</script>
+</body>
+</html>

@@ -5,9 +5,9 @@ async fun greet(name) {
 }
 
 // Calling an async function
-let msg = greet("Yatsu")
+msg = greet("Yatsu")
 print(msg)
 
 // Await on a value passes through directly
-let result = await greet("World")
+result = await greet("World")
 print("Greeting: " + result)

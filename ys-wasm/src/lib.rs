@@ -35,6 +35,12 @@ pub fn eval(source: &str) -> String {
     if error.is_empty() {
         if output.is_empty() { "ok".to_string() } else { output.trim_end().to_string() }
     } else {
-        if output.is_empty() { error } else { format!("{}\n{}", output.trim_end(), error) }
+        // Prefix errors with "ERROR:" marker so the playground can detect them
+        // even when print output is present.
+        if output.trim().is_empty() {
+            format!("ERROR:{}", error)
+        } else {
+            format!("{}\nERROR:{}", output.trim_end(), error)
+        }
     }
 }

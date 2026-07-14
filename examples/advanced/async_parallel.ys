@@ -5,16 +5,16 @@
 // resolves all in parallel and returns a list of results.
 
 print("=== Parallel fetches ===")
-let t1 = time()
+t1 = time()
 
 // Fire both requests at once (no await — they run in background threads)
-let p1 = fetch("https://example.com")
-let p2 = fetch("https://example.com")
+p1 = fetch("https://example.com")
+p2 = fetch("https://example.com")
 
 // Await the array — resolves all in parallel
-let results = await [p1, p2]
+results = await [p1, p2]
 
-let t2 = time()
+t2 = time()
 print(results)
 print("Got " + str(len(results)) + " responses in " + str(t2 - t1) + " seconds")
 print("Response 1: " + str(len(results[0])) + " bytes")

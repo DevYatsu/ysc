@@ -17,15 +17,15 @@ async fun task_b() {
 }
 
 print("=== Parallel sleep demo ===")
-let t0 = time()
+t0 = time()
 
 // Fire both tasks at once
-let pa = task_a()
-let pb = task_b()
+pa = task_a()
+pb = task_b()
 
 // Wait for both to complete
-let results = await [pa, pb]
-let t1 = time()
+results = await [pa, pb]
+t1 = time()
 
 print("Total: " + str(t1 - t0) + " seconds")
 print("Results: " + results[0] + ", " + results[1])

@@ -249,6 +249,29 @@ enum GetResult {
 
 //  Collection handlers
 
+fn handle_object_get_by_key(
+    obj_val: Value,
+    key: &str,
+    ctx: &Context,
+) -> GetResult {
+    if let Some(oid) = obj_val.as_obj_id() {
+        let heap = ctx.heap.objects.get();
+        let obj = unsafe { heap.get_unchecked(oid as usize) };
+        if let Some(obj) = obj {
+            if let ManagedObject::Object(fields) = &obj.obj {
+                let name_id = ctx.string_pool.iter()
+                    .position(|s| s.as_ref() == key)
+                    .map(|i| i as u32);
+                match name_id.and_then(|id| fields.get(&id)) {
+                    Some(val) => return GetResult::Value(*val),
+                    None => return GetResult::Error(format!("Object has no field '{}'", key)),
+                }
+            }
+        }
+    }
+    GetResult::Error("Expected an object for field access".into())
+}
+
 fn handle_list_get(
     regs: &[Value],
     list: usize,
@@ -258,6 +281,12 @@ fn handle_list_get(
 ) -> GetResult {
     let list_val  = regs[list];
     let index_val = regs[index_reg];
+
+    // If index is a string, try object field access
+    if let Some(key) = ctx.value_as_string(index_val) {
+        return handle_object_get_by_key(list_val, &key, ctx);
+    }
+
     let idx = match index_val.as_number() {
         Some(n) => n as usize,
         None => return GetResult::Error("List index must be a number".into()),
@@ -265,7 +294,6 @@ fn handle_list_get(
 
     if let Some(oid) = list_val.as_obj_id() {
         let heap = ctx.heap.objects.get();
-        // Safety: object ID is always valid (allocated by this heap).
         let obj = unsafe { heap.get_unchecked(oid as usize) };
         if let Some(obj) = obj {
             return match &obj.obj {
@@ -288,7 +316,18 @@ fn handle_list_get(
                         GetResult::Error(format!("String index {} out of bounds", idx))
                     }
                 }
-                _ => GetResult::Error("Expected a list or string for index".into()),
+                ManagedObject::Object(fields) => {
+                    // Numeric index on an object — check if string key exists as number
+                    let key_str = idx.to_string();
+                    let name_id = ctx.string_pool.iter()
+                        .position(|s| s.as_ref() == key_str)
+                        .map(|i| i as u32);
+                    match name_id.and_then(|id| fields.get(&id)) {
+                        Some(val) => GetResult::Value(*val),
+                        None => GetResult::Error(format!("Object has no field '{}'", idx)),
+                    }
+                }
+                _ => GetResult::Error("Expected a list, string, or object for index".into()),
             };
         }
         GetResult::Error("Null object dereference".into())
@@ -486,6 +525,18 @@ impl CallFrame {
 
 thread_local! {
     static CURRENT_FRAMES: std::cell::UnsafeCell<*const Vec<CallFrame>> = const { std::cell::UnsafeCell::new(std::ptr::null()) };
+}
+
+/// Set before calling a native function so the function (e.g. print) can
+/// annotate its output with the source line number.
+std::thread_local! {
+    static CALL_LOC: std::cell::Cell<Option<(u32, u32)>> = const { std::cell::Cell::new(None) };
+}
+pub(crate) fn set_call_loc(line: u32, col: u32) {
+    CALL_LOC.with(|loc| loc.set(Some((line, col))));
+}
+pub(crate) fn get_call_loc() -> Option<(u32, u32)> {
+    CALL_LOC.with(|loc| loc.get())
 }
 
 pub(crate) fn scan_current_frames(worklist: &mut Vec<u32>) {
@@ -1220,6 +1271,10 @@ pub fn execute_bytecode(
                             })?
                         }
                     };
+
+                    // Store call location so native functions (e.g. print)
+                    // can annotate output with the source line.
+                    set_call_loc(loc.line, loc.col);
 
                     // Inline dispatch — avoids the dispatch_callable function call
                     // and extra enum match.  Matches on the reference directly.
