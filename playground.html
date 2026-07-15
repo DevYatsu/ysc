@@ -216,7 +216,7 @@ const $tabOut = document.getElementById('tabOut');
 const $tabAst = document.getElementById('tabAst');
 const $tabBc = document.getElementById('tabBc');
 
-let editor, wasm, currentTab = 'output';
+let editor, wasm, currentTab = 'output', lastOutput = '';
 
 require.config({ paths: { vs: 'https://cdn.jsdelivr.net/npm/monaco-editor@0.52.0/min/vs' } });
 
@@ -225,11 +225,37 @@ require(['vs/editor/editor.main'], async function () {
   monaco.languages.register({ id: 'ysc' });
   monaco.languages.setMonarchTokensProvider('ysc', yscLanguage);
 
+  // Custom dark theme matching the website
+  monaco.editor.defineTheme('ysc-dark', {
+    base: 'vs-dark',
+    inherit: true,
+    rules: [
+      { token: 'keyword', foreground: 'ff7b72' },
+      { token: 'string', foreground: 'a5d6ff' },
+      { token: 'string.quote', foreground: 'a5d6ff' },
+      { token: 'number', foreground: '79c0ff' },
+      { token: 'number.float', foreground: '79c0ff' },
+      { token: 'comment', foreground: '8b949e', fontStyle: 'italic' },
+      { token: 'identifier', foreground: 'e6edf3' },
+      { token: 'delimiter', foreground: '8b949e' },
+      { token: 'operator', foreground: 'ffa657' },
+    ],
+    colors: {
+      'editor.background': '#0d1117',
+      'editor.foreground': '#e6edf3',
+      'editor.lineHighlightBackground': '#161b22',
+      'editor.selectionBackground': '#1c2333',
+      'editorCursor.foreground': '#569cd6',
+      'editorLineNumber.foreground': '#6e7681',
+      'editorIndentGuide.background': '#252d3f',
+    },
+  });
+
   // Create editor
   editor = monaco.editor.create(document.getElementById('editor-container'), {
     value: DEFAULT_CODE,
     language: 'ysc',
-    theme: 'vs-dark',
+    theme: 'ysc-dark',
     fontSize: 14,
     lineNumbers: 'on',
     minimap: { enabled: false },
@@ -306,11 +332,10 @@ require(['vs/editor/editor.main'], async function () {
 function showTab(tab) {
   currentTab = tab;
   [$tabOut, $tabAst, $tabBc].forEach(t => t.classList.remove('active'));
-  if (tab === 'output') $tabOut.classList.add('active');
-  if (tab === 'ast') $tabAst.classList.add('active');
-  if (tab === 'bytecode') $tabBc.classList.add('active');
+  if (tab === 'output') { $tabOut.classList.add('active'); $out.innerHTML = lastOutput || ''; }
+  if (tab === 'ast') { $tabAst.classList.add('active'); if (wasm && editor) refresh(); }
+  if (tab === 'bytecode') { $tabBc.classList.add('active'); if (wasm && editor) refresh(); }
   $out.classList.toggle('is-wrapped', tab !== 'bytecode');
-  if (tab !== 'output' && wasm && editor) refresh();
 }
 
 $tabOut.onclick = () => showTab('output');
@@ -321,11 +346,10 @@ function refresh() {
   if (!wasm || !editor) return;
   try {
     const src = editor.getValue();
-    if (currentTab === 'output') runCode(src);
-    else if (currentTab === 'ast') showAst(src);
-    else showBytecode(src);
+    if (currentTab === 'ast') showAst(src);
+    else if (currentTab === 'bytecode') showBytecode(src);
   } catch (e) {
-    $out.textContent = 'Error: ' + e.message;
+    $out.innerHTML = '<span class="error-text">' + escape(e.message) + '</span>';
   }
 }
 
@@ -339,19 +363,20 @@ function runCode(src) {
   const r = wasm._eval(src);
   if (r.success) {
     const lines = r.lines || [];
-    $out.innerHTML = lines.length ? lines.map(formatLine).join('\n') : '';
+    lastOutput = lines.length ? lines.map(formatLine).join('\n') : '';
   } else {
     let html = '';
     (r.lines || []).forEach(l => { html += formatLine(l) + '\n'; });
     html += '<span class="error-text">' + escape(r.error || 'Error') + '</span>';
-    $out.innerHTML = html;
+    lastOutput = html;
   }
+  $out.innerHTML = lastOutput;
 }
 
 function showAst(src) {
   const r = wasm._parseAst(src);
   if (r.success) {
-    $out.textContent = JSON.stringify(r.data, null, 2);
+    $out.innerHTML = syntaxHighlightJSON(r.data, 0);
   } else {
     $out.innerHTML = '<span class="error-text">' + escape(r.error || 'Error') + '</span>';
   }
@@ -360,21 +385,73 @@ function showAst(src) {
 function showBytecode(src) {
   const r = wasm._disassemble(src);
   if (r.success) {
-    let text = '';
+    let html = '';
     (r.functions || []).forEach(fn => {
-      text += '--- fn ' + fn.index + ': ' + fn.name + ' (p=' + fn.params + ', l=' + fn.locals + ') ---\n';
-      (fn.instructions || []).forEach((ins, i) => { text += '  ' + String(i).padStart(4) + ': ' + ins + '\n'; });
-      text += '\n';
+      html += '<span style="color:#569cd6;font-weight:600;">fn ' + fn.index + ': ' + escape(fn.name)
+        + '</span> <span style="color:#8b949e;">(p=' + fn.params + ', l=' + fn.locals + ')</span>\n';
+      (fn.instructions || []).forEach((ins, i) => {
+        html += '  <span style="color:#6e7681;">' + String(i).padStart(4) + '</span>: '
+          + colorInstruction(ins) + '\n';
+      });
+      html += '\n';
     });
-    text += '--- main ---\n';
-    (r.main || []).forEach((ins, i) => { text += '  ' + String(i).padStart(4) + ': ' + ins + '\n'; });
-    $out.textContent = text;
+    html += '<span style="color:#569cd6;font-weight:600;">main</span>\n';
+    (r.main || []).forEach((ins, i) => {
+      html += '  <span style="color:#6e7681;">' + String(i).padStart(4) + '</span>: '
+        + colorInstruction(ins) + '\n';
+    });
+    $out.innerHTML = html;
   } else {
     $out.innerHTML = '<span class="error-text">' + escape(r.error || 'Error') + '</span>';
   }
 }
 
-$runBtn.onclick = () => { showTab('output'); runCode(editor ? editor.getValue() : ''); };
+function colorInstruction(ins) {
+  // Color instruction opcodes and operands
+  const opcode = ins.match(/^(\w+)/);
+  if (!opcode) return escape(ins);
+  const rest = ins.slice(opcode[0].length);
+  return '<span style="color:#c586c0;">' + opcode[0] + '</span>'
+    + rest.replace(/(\b\d+\b)/g, '<span style="color:#79c0ff;">$1</span>')
+         .replace(/(:\s*)(Loc\b)/g, '$1<span style="color:#8b949e;">$2</span>');
+}
+
+function syntaxHighlightJSON(obj, depth) {
+  const indent = '  '.repeat(depth);
+  const indent1 = '  '.repeat(depth + 1);
+  if (obj === null || obj === undefined) return '<span style="color:#8b949e;">null</span>';
+  if (typeof obj === 'string') return '<span style="color:#a5d6ff;">"' + escape(obj) + '"</span>';
+  if (typeof obj === 'number') return '<span style="color:#79c0ff;">' + obj + '</span>';
+  if (typeof obj === 'boolean') return '<span style="color:#ff7b72;">' + obj + '</span>';
+  if (Array.isArray(obj)) {
+    if (obj.length === 0) return '[]';
+    let html = '[\n';
+    obj.forEach((item, i) => {
+      html += indent1 + syntaxHighlightJSON(item, depth + 1);
+      if (i < obj.length - 1) html += ',';
+      html += '\n';
+    });
+    html += indent + ']';
+    return html;
+  }
+  if (typeof obj === 'object') {
+    const keys = Object.keys(obj);
+    if (keys.length === 0) return '{}';
+    let html = '{\n';
+    keys.forEach((key, i) => {
+      const val = obj[key];
+      const keyColor = key === 'type' ? '#569cd6' : '#d2a8ff';
+      html += indent1 + '<span style="color:' + keyColor + ';">' + key + '</span>: ' + syntaxHighlightJSON(val, depth + 1);
+      if (i < keys.length - 1) html += ',';
+      html += '\n';
+    });
+    html += indent + '}';
+    return html;
+  }
+  return escape(String(obj));
+}
+
+$runBtn.onclick = () => { showTab('output'); if (editor) runCode(editor.getValue()); };
 $resetBtn.onclick = () => { if (editor) editor.setValue(DEFAULT_CODE); };
 document.addEventListener('keydown', e => {
   if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
