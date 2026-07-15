@@ -148,7 +148,6 @@ fn node_loc(node: &ys_core::ast::AstNode) -> Option<ys_core::compiler::Loc> {
         AstNode::ListRepeat { loc, .. } => Some(*loc),
         AstNode::Template { loc, .. } => Some(*loc),
         AstNode::Binary { loc, .. } => Some(*loc),
-        _ => None,
     }
 }
 
