@@ -104,14 +104,46 @@ nav .logo .hide-mobile { display: inline; }
 .output-entry:last-child { border-bottom: none; }
 .output-entry .output-src {
   flex-shrink: 0;
-  font-size: 0.65rem;
-  color: #484f58;
+  font-size: 0.6rem;
+  color: #3a3f4b;
   user-select: none;
-  min-width: 3.5em;
+  min-width: 2.5em;
   text-align: right;
+  font-weight: 400;
 }
 .output-entry .output-val { color: var(--text); word-break: break-all; }
 .error-text { color: var(--red); }
+
+/* ── Bytecode layout ─── */
+.bc-wrap { font-family: var(--mono); font-size: 0.78rem; }
+.bc-fn {
+  display: flex; align-items: baseline; gap: 0.75rem;
+  margin: 0.75rem 0 0.25rem; padding-bottom: 0.25rem;
+  border-bottom: 1px solid var(--surface-3);
+}
+.bc-fn:first-child { margin-top: 0; }
+.bc-fn-name { color: #569cd6; font-weight: 600; }
+.bc-fn-meta { color: #484f58; font-size: 0.7rem; }
+.bc-row {
+  display: flex; align-items: baseline; gap: 0.5rem;
+  padding: 0.1rem 0;
+  border-radius: 3px;
+}
+.bc-row:hover { background: rgba(255,255,255,0.03); }
+.bc-idx {
+  flex-shrink: 0; min-width: 2.2em; text-align: right;
+  color: #484f58; font-size: 0.7rem; user-select: none;
+}
+.bc-op { color: #c586c0; }
+.bc-rest { color: var(--text-secondary); }
+.bc-rest .bc-num { color: #79c0ff; }
+.bc-loc {
+  cursor: pointer; color: #58a6ff; font-size: 0.7rem;
+  border-bottom: 1px dashed #1f3a5a;
+  margin-left: 0.25rem;
+  user-select: none;
+}
+.bc-loc:hover { color: #79c0ff; border-bottom-color: #58a6ff; }
 
 @media (max-width: 768px) {
   .playground-wrap { flex-direction: column; }
@@ -144,6 +176,7 @@ nav .logo .hide-mobile { display: inline; }
   <div class="playground-editor">
     <div class="playground-bar">
       <button class="btn btn-primary" id="runBtn" disabled style="padding:4px 16px;font-size:13px;">▶ Run</button>
+      <button class="btn btn-ghost" id="formatBtn" style="padding:4px 12px;font-size:13px;">✨ Format</button>
       <button class="btn btn-ghost" id="resetBtn" style="padding:4px 12px;font-size:13px;">↺ Reset</button>
       <span class="status" id="status">Loading…</span>
     </div>
@@ -228,6 +261,7 @@ print("sum 0..9 = " + sum)
 const $out = document.getElementById('output');
 const $runBtn = document.getElementById('runBtn');
 const $resetBtn = document.getElementById('resetBtn');
+const $formatBtn = document.getElementById('formatBtn');
 const $status = document.getElementById('status');
 const $tabOut = document.getElementById('tabOut');
 const $tabAst = document.getElementById('tabAst');
@@ -524,24 +558,27 @@ function renderAstNode(obj, depth) {
   return escape(String(obj));
 }
 
-// ── Bytecode (colored, clickable lines) ────────────────
+// ── Bytecode (colored, clickable, table-like) ──────────
 function showBytecode(src) {
   const r = wasm._disassemble(src);
   if (r.success) {
-    let html = '';
+    let html = '<div class="bc-wrap">';
     (r.functions || []).forEach(fn => {
-      html += '<div style="color:#569cd6;font-weight:600;margin-top:0.5em;">fn ' + fn.index + ': '
-        + escape(fn.name) + '</div>';
+      html += '<div class="bc-fn"><span class="bc-fn-name">fn ' + escape(fn.name) + '</span>'
+        + '<span class="bc-fn-meta">' + fn.params + ' params, ' + fn.locals + ' locals</span></div>';
       (fn.instructions || []).forEach((ins, i) => {
-        html += '  <span style="color:#6e7681;">' + String(i).padStart(4) + '</span>: '
-          + colorInstruction(ins) + '\n';
+        html += '<div class="bc-row">'
+          + '<span class="bc-idx">' + i + '</span>'
+          + colorInstruction(ins) + '</div>';
       });
     });
-    html += '<div style="color:#569cd6;font-weight:600;margin-top:0.5em;">main</div>\n';
+    html += '<div class="bc-fn"><span class="bc-fn-name">main</span></div>';
     (r.main || []).forEach((ins, i) => {
-      html += '  <span style="color:#6e7681;">' + String(i).padStart(4) + '</span>: '
-        + colorInstruction(ins) + '\n';
+      html += '<div class="bc-row">'
+        + '<span class="bc-idx">' + i + '</span>'
+        + colorInstruction(ins) + '</div>';
     });
+    html += '</div>';
     $out.innerHTML = html;
   } else {
     $out.innerHTML = '<span class="error-text">' + escape(r.error || 'Error') + '</span>';
@@ -552,23 +589,21 @@ function colorInstruction(ins) {
   const opcode = ins.match(/^(\w+)/);
   if (!opcode) return escape(ins);
   const op = opcode[0];
-  const rest = ins.slice(op.length);
+  let rest = ins.slice(op.length);
 
-  // Parse Loc from the instruction string, e.g. "Loc { line: 5, col: 10 }"
   const locMatch = rest.match(/Loc\s*\{\s*line:\s*(\d+)\s*,\s*col:\s*(\d+)\s*\}/);
   let locHtml = '';
-  let body = rest;
   if (locMatch) {
     const line = parseInt(locMatch[1], 10);
     const col = parseInt(locMatch[2], 10);
-    locHtml = '<span class="bc-loc" data-line="' + line + '" data-col="' + col + '"'
-      + ' style="cursor:pointer;border-bottom:1px dashed #3a3a50;color:#8b949e;"'
-      + ' title="Click to go to line ' + line + '">'
-      + 'Loc{' + line + ':' + col + '}</span>';
-    body = rest.slice(0, locMatch.index) + rest.slice(locMatch.index + locMatch[0].length);
+    locHtml = '<span class="bc-loc" data-line="' + line + '" data-col="' + col + '">'
+      + line + ':' + col + '</span>';
+    rest = rest.slice(0, locMatch.index) + rest.slice(locMatch.index + locMatch[0].length);
   }
-  return '<span style="color:#c586c0;">' + op + '</span>'
-    + body.replace(/(\b\d+\b)/g, '<span style="color:#79c0ff;">$1</span>')
+
+  rest = rest.replace(/(\b\d+\b)/g, '<span class="bc-num">$1</span>');
+  return '<span class="bc-op">' + op + '</span>'
+    + '<span class="bc-rest">' + rest + '</span>'
     + locHtml;
 }
 
@@ -584,6 +619,13 @@ $out.addEventListener('click', (e) => {
 
 $runBtn.onclick = () => { showTab('output'); if (editor) runCode(editor.getValue()); };
 $resetBtn.onclick = () => { if (editor) editor.setValue(DEFAULT_CODE); };
+$formatBtn.onclick = () => {
+  if (!editor || !wasm) return;
+  const formatted = wasm._format(editor.getValue());
+  editor.setValue(formatted);
+  $status.textContent = 'Formatted';
+  setTimeout(() => { $status.textContent = ''; }, 2000);
+};
 document.addEventListener('keydown', e => {
   if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
     e.preventDefault(); $runBtn.click();
