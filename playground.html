@@ -8,6 +8,7 @@
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%23569cd6'/><text x='16' y='22' font-size='18' font-weight='bold' fill='black' text-anchor='middle'>y</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;550;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" data-name="vs/editor/editor.min.css" href="https://cdn.jsdelivr.net/npm/monaco-editor@0.52.0/min/vs/editor/editor.min.css">
 <style>
 nav .logo .hide-mobile { display: inline; }
 @media (max-width: 480px) { nav .logo .hide-mobile { display: none; } }
@@ -30,9 +31,11 @@ nav .logo .hide-mobile { display: inline; }
   overflow: hidden;
 }
 
+#editor-container { flex: 1; }
+
 .playground-output {
-  width: 360px;
-  min-width: 280px;
+  width: 45%;
+  min-width: 360px;
   display: flex;
   flex-direction: column;
   background: var(--surface-1);
@@ -48,8 +51,12 @@ nav .logo .hide-mobile { display: inline; }
   font-family: var(--mono);
   font-size: 0.8rem;
   line-height: 1.6;
-  white-space: pre-wrap;
+  white-space: pre;
   color: var(--text);
+}
+
+.playground-output .output-content.is-wrapped {
+  white-space: pre-wrap;
 }
 
 .playground-bar {
@@ -83,26 +90,11 @@ nav .logo .hide-mobile { display: inline; }
   transition: all var(--transition-fast);
   user-select: none;
 }
-
 .playground-tab:hover { color: var(--text-secondary); }
 .playground-tab.active { color: var(--brand); border-bottom-color: var(--brand); }
 
 .line-ref { color: var(--green); font-size: 0.75rem; }
 .error-text { color: var(--red); }
-
-textarea#source {
-  flex: 1;
-  background: var(--surface-0);
-  color: var(--text);
-  border: none;
-  padding: var(--space-4);
-  font-family: var(--mono);
-  font-size: 0.85rem;
-  line-height: 1.6;
-  resize: none;
-  outline: none;
-  tab-size: 2;
-}
 
 @media (max-width: 768px) {
   .playground-wrap { flex-direction: column; }
@@ -138,7 +130,7 @@ textarea#source {
       <button class="btn btn-ghost" id="resetBtn" style="padding:4px 12px;font-size:13px;">↺ Reset</button>
       <span class="status" id="status">Loading…</span>
     </div>
-    <textarea id="source" spellcheck="false"></textarea>
+    <div id="editor-container"></div>
   </div>
   <div class="playground-output">
     <div class="playground-tabs">
@@ -158,17 +150,41 @@ Write code and press ▶ Run.</pre>
   <a href="https://github.com/DevYatsu/ysc">ysc</a> — MIT license. Built with Rust. Compiled to WASM.
 </footer>
 
-<script type="module">
-const $src = document.getElementById('source');
-const $out = document.getElementById('output');
-const $runBtn = document.getElementById('runBtn');
-const $resetBtn = document.getElementById('resetBtn');
-const $status = document.getElementById('status');
-const $tabOut = document.getElementById('tabOut');
-const $tabAst = document.getElementById('tabAst');
-const $tabBc = document.getElementById('tabBc');
+<script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.52.0/min/vs/loader.js"></script>
+<script>
+// ── Monarch tokenizer for ysc ──────────────────────────
+const yscLanguage = {
+  defaultToken: '', tokenPostfix: '.ys', ignoreCase: false,
+  keywords: ['fun','ret','if','else','for','while','in','and','or','not',
+    'nil','true','false','async','await','exp','use','switch',
+    'break','move','except','fail','error','yield'],
+  operators: ['+=','-=','*=','/=','%=','+','-','*','/','%',
+    '==','!=','<','<=','>','>=','=',':','..','->','|','!',',',';','.'],
+  symbols: /[=><!~?:&|+\-*\/^%]+/,
+  escapes: /\\(?:[abfnrtv\\"']|x[0-9A-Fa-f]{1,4}|u[0-9A-Fa-f]{4}|U[0-9A-Fa-f]{8})/,
+  tokenizer: {
+    root: [
+      [/\/\/.*$/, 'comment'], [/#.*$/, 'comment'],
+      [/"/, { token: 'string.quote', bracket: '@open', next: '@string' }],
+      [/\d+[eE][+-]?\d+/, 'number.float'],
+      [/\d+\.\d+([eE][+-]?\d+)?/, 'number.float'],
+      [/\d+/, 'number'],
+      [/[a-zA-Z_$][\w$]*/, { cases: { '@keywords': 'keyword', '@default': 'identifier' } }],
+      [/[{}()\[\]]/, '@brackets'], [/[.]/, 'delimiter'], [/[;,.]/, 'delimiter'],
+      [/@symbols/, { cases: { '@operators': 'operator', '@default': '' } }],
+      { include: '@whitespace' },
+    ],
+    string: [
+      [/[^\\"]+/, 'string'], [/@escapes/, 'string.escape'],
+      [/\\./, 'string.escape.invalid'],
+      [/"/, { token: 'string.quote', bracket: '@close', next: '@pop' }],
+    ],
+    whitespace: [[/[ \t\r\n]+/, 'white']],
+  },
+};
 
-const DEFAULT = `// ysc — interactive demo
+// ── Default code ───────────────────────────────────────
+const DEFAULT_CODE = `// ysc — interactive demo
 
 fun fib(n) {
   if n < 2 { ret n }
@@ -191,40 +207,132 @@ for i in 0..10 {
 print("sum 0..9 = " + sum)
 `;
 
-$src.value = DEFAULT;
-let wasm, currentTab = 'output';
+// ── Bootstrap ──────────────────────────────────────────
+const $out = document.getElementById('output');
+const $runBtn = document.getElementById('runBtn');
+const $resetBtn = document.getElementById('resetBtn');
+const $status = document.getElementById('status');
+const $tabOut = document.getElementById('tabOut');
+const $tabAst = document.getElementById('tabAst');
+const $tabBc = document.getElementById('tabBc');
 
+let editor, wasm, currentTab = 'output';
+
+require.config({ paths: { vs: 'https://cdn.jsdelivr.net/npm/monaco-editor@0.52.0/min/vs' } });
+
+require(['vs/editor/editor.main'], async function () {
+  // Register ysc language
+  monaco.languages.register({ id: 'ysc' });
+  monaco.languages.setMonarchTokensProvider('ysc', yscLanguage);
+
+  // Create editor
+  editor = monaco.editor.create(document.getElementById('editor-container'), {
+    value: DEFAULT_CODE,
+    language: 'ysc',
+    theme: 'vs-dark',
+    fontSize: 14,
+    lineNumbers: 'on',
+    minimap: { enabled: false },
+    scrollBeyondLastLine: false,
+    automaticLayout: true,
+    tabSize: 2,
+    wordWrap: 'on',
+  });
+
+  // Autocomplete
+  monaco.languages.registerCompletionItemProvider('ysc', {
+    provideCompletionItems: (model, position) => {
+      const range = model.getWordUntilPosition(position);
+      const r = { startLineNumber: position.lineNumber, endLineNumber: position.lineNumber,
+        startColumn: range.startColumn, endColumn: range.endColumn };
+      const kw = ['fun','ret','if','else','for','while','in','and','or','not',
+        'nil','true','false','async','await','exp','use','switch','break','move','except','fail','error','yield'];
+      const builtins = [
+        {label:'print',detail:'print(...values)'},{label:'str',detail:'str(value)'},
+        {label:'len',detail:'len(value)'},{label:'time',detail:'time()'},
+        {label:'sleep',detail:'sleep(ms)'},{label:'fetch',detail:'fetch(url)'},{label:'spawn',detail:'spawn(fn,...)'}];
+      const strM = ['len','upper','lower','trim','starts_with','ends_with','contains',
+        'replace','split','repeat','slice','index_of','to_number','is_empty','chars'];
+      const numM = ['to_string','ceil','floor','round','abs','sqrt','pow','is_integer','to_int'];
+      const objM = ['keys','values','entries','has'];
+      const listM = ['map','filter','reduce','each','find','some','every','flat_map',
+        'includes','index_of','sorted','reversed','slice','concat','flatten','take','drop','unique'];
+      return { suggestions: [
+        ...kw.map(k => ({ label: k, kind: monaco.languages.CompletionItemKind.Keyword, insertText: k, range: r })),
+        ...builtins.map(f => ({ label: f.label, kind: monaco.languages.CompletionItemKind.Function, insertText: f.label, detail: f.detail, range: r })),
+        ...strM.map(m => ({ label: m, kind: monaco.languages.CompletionItemKind.Method, insertText: m, detail: 'string.'+m+'()', range: r })),
+        ...numM.map(m => ({ label: m, kind: monaco.languages.CompletionItemKind.Method, insertText: m, detail: 'number.'+m+'()', range: r })),
+        ...objM.map(m => ({ label: m, kind: monaco.languages.CompletionItemKind.Method, insertText: m, detail: 'object.'+m+'()', range: r })),
+        ...listM.map(m => ({ label: m, kind: monaco.languages.CompletionItemKind.Method, insertText: m, detail: 'list.'+m+'()', range: r })),
+      ]};
+    },
+  });
+
+  // Hover provider
+  monaco.languages.registerHoverProvider('ysc', {
+    provideHover: (model, position) => {
+      const w = model.getWordAtPosition(position);
+      if (!w) return null;
+      const docs = {
+        'fun': 'Declare a function.\n\n```ys\nfun name(params) { body }\n```',
+        'ret': 'Return a value.\n\n```ys\nret expr\n```',
+        'if': 'Conditional branch.\n\n```ys\nif cond { ... } else { ... }\n```',
+        'for': 'Loop over an iterable.\n\n```ys\nfor var in iter { ... }\n```',
+        'while': 'Loop while condition is true.',
+        'print': 'Output values.\n\n```ys\nprint("hello", 42)\n```',
+        'str': 'Convert to string.\n\n```ys\nstr(42) → "42"\n```',
+        'len': 'Get length.\n\n```ys\nlen("hi") → 2\n```',
+        'yield': 'Generator keyword (future).',
+      };
+      if (docs[w.word]) return { contents: [{ value: docs[w.word] }] };
+      return null;
+    },
+  });
+
+  // Load WASM
+  try {
+    const wasmMod = await import('./pkg/ys_wasm.js');
+    await wasmMod.default();
+    wasm = wasmMod;
+    $status.textContent = 'Ready';
+    $runBtn.disabled = false;
+  } catch (e) {
+    $status.textContent = 'Unavailable';
+    $out.innerHTML = '<span class="error-text">WASM module not loaded.\n\n' + e.message + '</span>';
+  }
+});
+
+// ── Tab switching ──────────────────────────────────────
 function showTab(tab) {
   currentTab = tab;
   [$tabOut, $tabAst, $tabBc].forEach(t => t.classList.remove('active'));
   if (tab === 'output') $tabOut.classList.add('active');
   if (tab === 'ast') $tabAst.classList.add('active');
   if (tab === 'bytecode') $tabBc.classList.add('active');
+  $out.classList.toggle('is-wrapped', tab !== 'bytecode');
+  if (tab !== 'output' && wasm && editor) refresh();
 }
 
-$tabOut.onclick = () => { showTab('output'); refresh(); };
-$tabAst.onclick = () => { showTab('ast'); refresh(); };
-$tabBc.onclick = () => { showTab('bytecode'); refresh(); };
+$tabOut.onclick = () => showTab('output');
+$tabAst.onclick = () => showTab('ast');
+$tabBc.onclick = () => showTab('bytecode');
 
 function refresh() {
-  if (!wasm) return;
+  if (!wasm || !editor) return;
   try {
-    if (currentTab === 'output') runCode($src.value);
-    else if (currentTab === 'ast') showAst($src.value);
-    else showBytecode($src.value);
+    const src = editor.getValue();
+    if (currentTab === 'output') runCode(src);
+    else if (currentTab === 'ast') showAst(src);
+    else showBytecode(src);
   } catch (e) {
     $out.textContent = 'Error: ' + e.message;
   }
 }
 
 function escape(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
-
 function formatLine(l) {
   const val = escape(l.value || '');
-  if (l.line !== undefined) {
-    return '<span class="line-ref">[l.' + l.line + ']</span> ' + val;
-  }
-  return val;
+  return l.line !== undefined ? '<span class="line-ref">[l.' + l.line + ']</span> ' + val : val;
 }
 
 function runCode(src) {
@@ -255,36 +363,19 @@ function showBytecode(src) {
     let text = '';
     (r.functions || []).forEach(fn => {
       text += '--- fn ' + fn.index + ': ' + fn.name + ' (p=' + fn.params + ', l=' + fn.locals + ') ---\n';
-      (fn.instructions || []).forEach((ins, i) => {
-        text += '  ' + String(i).padStart(4) + ': ' + ins + '\n';
-      });
+      (fn.instructions || []).forEach((ins, i) => { text += '  ' + String(i).padStart(4) + ': ' + ins + '\n'; });
       text += '\n';
     });
     text += '--- main ---\n';
-    (r.main || []).forEach((ins, i) => {
-      text += '  ' + String(i).padStart(4) + ': ' + ins + '\n';
-    });
+    (r.main || []).forEach((ins, i) => { text += '  ' + String(i).padStart(4) + ': ' + ins + '\n'; });
     $out.textContent = text;
   } else {
     $out.innerHTML = '<span class="error-text">' + escape(r.error || 'Error') + '</span>';
   }
 }
 
-(async () => {
-  try {
-    const m = await import('./pkg/ys_wasm.js');
-    await m.default();
-    wasm = m;
-    $status.textContent = 'Ready';
-    $runBtn.disabled = false;
-  } catch (e) {
-    $status.textContent = 'Unavailable';
-    $out.innerHTML = '<span class="error-text">WASM module not loaded. Run locally or check browser compatibility.\n\n' + escape(e.message) + '</span>';
-  }
-})();
-
-$runBtn.onclick = () => { showTab('output'); runCode($src.value); };
-$resetBtn.onclick = () => { $src.value = DEFAULT; refresh(); };
+$runBtn.onclick = () => { showTab('output'); runCode(editor ? editor.getValue() : ''); };
+$resetBtn.onclick = () => { if (editor) editor.setValue(DEFAULT_CODE); };
 document.addEventListener('keydown', e => {
   if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
     e.preventDefault(); $runBtn.click();
