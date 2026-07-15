@@ -213,7 +213,7 @@ impl<'source> AstParser<'source> {
         loop {
             let Some(td) = tokens.get(p) else { return false };
             match td.token {
-                Token::Newline | Token::LineComment => p += 1,
+                Token::Newline | Token::LineComment(_) => p += 1,
                 Token::Colon => {
                     p += 1;
                     // skip the type name

@@ -78,7 +78,7 @@ pub fn analyze_source(source: &str) -> AnalysisResults {
                     Token::String(_) | Token::Template(_) => LspTokenVariant::String,
                     Token::Number(_) => LspTokenVariant::Number,
                     
-                    Token::LineComment => LspTokenVariant::Comment,
+                    Token::LineComment(_) => LspTokenVariant::Comment,
                     _ => LspTokenVariant::Other,
                 };
                 

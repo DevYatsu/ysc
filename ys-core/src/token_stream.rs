@@ -66,7 +66,7 @@ impl<'source> TokenStream<'source> {
                         tokens.push(TokenData { token: t, loc });
                         line += 1;
                         line_start = span.end;
-                    } else if t != Token::LineComment {
+                    } else if !matches!(t, Token::LineComment(_)) {
                         tokens.push(TokenData { token: t, loc });
                     }
                 }
@@ -132,7 +132,7 @@ impl<'source> TokenStream<'source> {
 
     /// Skip over consecutive [`Token::Newline`] and [`Token::LineComment`] tokens.
     pub fn skip_newlines(&mut self) {
-        while matches!(self.peek(), Some(Token::Newline) | Some(Token::LineComment)) {
+        while matches!(self.peek(), Some(Token::Newline) | Some(Token::LineComment(_))) {
             self.advance().ok();
         }
     }

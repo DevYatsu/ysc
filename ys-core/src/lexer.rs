@@ -281,7 +281,7 @@ pub enum Token<'source> {
 
     /// Double-slash line comments.
     #[regex(r"//[^\n]*", allow_greedy = true)]
-    LineComment,
+    LineComment(&'source str),
 }
 
 impl fmt::Display for LexingError {
@@ -390,7 +390,7 @@ mod tests {
         assert_eq!(lexer.next(), Some(Ok(Token::Identifier("x"))));
         assert_eq!(lexer.next(), Some(Ok(Token::Equals)));
         assert_eq!(lexer.next(), Some(Ok(Token::Number(10.0))));
-        assert_eq!(lexer.next(), Some(Ok(Token::LineComment)));
+        assert_eq!(lexer.next(), Some(Ok(Token::LineComment("// this is a comment"))));
         assert_eq!(lexer.next(), Some(Ok(Token::Newline)));
         assert_eq!(lexer.next(), Some(Ok(Token::Identifier("let"))));
         assert_eq!(lexer.next(), Some(Ok(Token::Identifier("y"))));

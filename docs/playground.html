@@ -103,13 +103,13 @@ nav .logo .hide-mobile { display: inline; }
 }
 .output-entry:last-child { border-bottom: none; }
 .output-entry .output-src {
+  margin-left: auto;
   flex-shrink: 0;
   font-size: 0.6rem;
   color: #3a3f4b;
   user-select: none;
-  min-width: 2.5em;
-  text-align: right;
   font-weight: 400;
+  font-family: var(--mono);
 }
 .output-entry .output-val { color: var(--text); word-break: break-all; }
 .error-text { color: var(--red); }
@@ -129,6 +129,7 @@ nav .logo .hide-mobile { display: inline; }
   padding: 0.1rem 0;
   border-radius: 3px;
 }
+.bc-row[data-line] { cursor: pointer; }
 .bc-row:hover { background: rgba(255,255,255,0.03); }
 .bc-idx {
   flex-shrink: 0; min-width: 2.2em; text-align: right;
@@ -409,10 +410,10 @@ function escape(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace
 function formatLine(l) {
   const val = escape(l.value || '');
   let html = '<div class="output-entry">';
-  if (l.line !== undefined) {
-    html += '<span class="output-src">line ' + l.line + '</span>';
-  }
   html += '<span class="output-val">' + val + '</span>';
+  if (l.line !== undefined) {
+    html += '<span class="output-src">' + l.line + '</span>';
+  }
   html += '</div>';
   return html;
 }
@@ -449,7 +450,7 @@ function showAst(src) {
   const r = wasm._parseAst(src);
   if (r.success) {
     astIdCounter = 0;
-    $out.innerHTML = renderAstNode(r.data, 0);
+    $out.innerHTML = renderAstNode(r.data, 0, true);
     // Attach click handlers for collapse toggles
     $out.querySelectorAll('.ast-toggle').forEach(el => {
       el.onclick = (e) => {
@@ -475,9 +476,8 @@ function showAst(src) {
   }
 }
 
-function renderAstNode(obj, depth) {
+function renderAstNode(obj, depth, expanded) {
   const id = ++astIdCounter;
-  const indent = '  '.repeat(depth);
   if (obj === null || obj === undefined)
     return '<span style="color:#8b949e;">null</span>';
   if (typeof obj === 'string')
@@ -491,11 +491,13 @@ function renderAstNode(obj, depth) {
     if (obj.length === 0) return '<span style="color:#8b949e;">[]</span>';
     let items = '';
     obj.forEach((item, i) => {
-      items += '<div style="padding-left:1em;">' + renderAstNode(item, depth + 1) + '</div>';
+      items += '<div style="padding-left:1em;">' + renderAstNode(item, depth + 1, false) + '</div>';
     });
-    return '<div><span class="ast-toggle" style="cursor:pointer;user-select:none;color:#8b949e;">▶</span>'
+    const toggle = expanded ? '▼' : '▶';
+    const display = expanded ? '' : 'none';
+    return '<div><span class="ast-toggle" style="cursor:pointer;user-select:none;color:#8b949e;">' + toggle + '</span>'
       + '<span style="color:#8b949e;">Array[' + obj.length + ']</span>'
-      + '<div class="ast-children" style="display:none;">' + items + '</div></div>';
+      + '<div class="ast-children" style="display:' + display + ';">' + items + '</div></div>';
   }
 
   if (typeof obj === 'object') {
@@ -527,7 +529,7 @@ function renderAstNode(obj, depth) {
       keys.forEach((k, i) => {
         if (k === 'line' || k === 'col' || k === 'type') return;
         if (i > 0) html += ', ';
-        html += '<span style="color:#d2a8ff;">' + k + '</span>: ' + renderAstNode(obj[k], depth+1);
+        html += '<span style="color:#d2a8ff;">' + k + '</span>: ' + renderAstNode(obj[k], depth+1, false);
       });
       html += ' }';
     } else {
@@ -547,7 +549,7 @@ function renderAstNode(obj, depth) {
         const val = obj[k];
         const keyColor = k === 'type' ? '#569cd6' : '#d2a8ff';
         html += '<div style="padding-left:1em;">';
-        html += '<span style="color:' + keyColor + ';">' + k + '</span>: ' + renderAstNode(val, depth+1);
+        html += '<span style="color:' + keyColor + ';">' + k + '</span>: ' + renderAstNode(val, depth+1, false);
         html += '</div>';
       });
       html += '</div>';
@@ -567,14 +569,18 @@ function showBytecode(src) {
       html += '<div class="bc-fn"><span class="bc-fn-name">fn ' + escape(fn.name) + '</span>'
         + '<span class="bc-fn-meta">' + fn.params + ' params, ' + fn.locals + ' locals</span></div>';
       (fn.instructions || []).forEach((ins, i) => {
-        html += '<div class="bc-row">'
+        const loc = extractLoc(ins);
+        const lineAttr = loc ? ' data-line="' + loc.line + '" data-col="' + loc.col + '"' : '';
+        html += '<div class="bc-row"' + lineAttr + '>'
           + '<span class="bc-idx">' + i + '</span>'
           + colorInstruction(ins) + '</div>';
       });
     });
     html += '<div class="bc-fn"><span class="bc-fn-name">main</span></div>';
     (r.main || []).forEach((ins, i) => {
-      html += '<div class="bc-row">'
+      const loc = extractLoc(ins);
+      const lineAttr = loc ? ' data-line="' + loc.line + '" data-col="' + loc.col + '"' : '';
+      html += '<div class="bc-row"' + lineAttr + '>'
         + '<span class="bc-idx">' + i + '</span>'
         + colorInstruction(ins) + '</div>';
     });
@@ -585,34 +591,32 @@ function showBytecode(src) {
   }
 }
 
+function extractLoc(ins) {
+  const m = ins.match(/Loc\s*\{\s*line:\s*(\d+)\s*,\s*col:\s*(\d+)\s*\}/);
+  if (m) return { line: parseInt(m[1], 10), col: parseInt(m[2], 10) };
+  return null;
+}
+
 function colorInstruction(ins) {
   const opcode = ins.match(/^(\w+)/);
   if (!opcode) return escape(ins);
   const op = opcode[0];
   let rest = ins.slice(op.length);
 
-  const locMatch = rest.match(/Loc\s*\{\s*line:\s*(\d+)\s*,\s*col:\s*(\d+)\s*\}/);
-  let locHtml = '';
-  if (locMatch) {
-    const line = parseInt(locMatch[1], 10);
-    const col = parseInt(locMatch[2], 10);
-    locHtml = '<span class="bc-loc" data-line="' + line + '" data-col="' + col + '">'
-      + line + ':' + col + '</span>';
-    rest = rest.slice(0, locMatch.index) + rest.slice(locMatch.index + locMatch[0].length);
-  }
+  // Remove Loc from display — it's attached to the row
+  rest = rest.replace(/Loc\s*\{\s*line:\s*\d+\s*,\s*col:\s*\d+\s*\}/, '');
 
   rest = rest.replace(/(\b\d+\b)/g, '<span class="bc-num">$1</span>');
   return '<span class="bc-op">' + op + '</span>'
-    + '<span class="bc-rest">' + rest + '</span>'
-    + locHtml;
+    + '<span class="bc-rest">' + rest + '</span>';
 }
 
 // Attach bytecode click handlers after rendering
 $out.addEventListener('click', (e) => {
-  const locEl = e.target.closest('.bc-loc');
-  if (locEl) {
-    const line = parseInt(locEl.dataset.line, 10);
-    const col = parseInt(locEl.dataset.col, 10);
+  const row = e.target.closest('.bc-row');
+  if (row) {
+    const line = parseInt(row.dataset.line, 10);
+    const col = parseInt(row.dataset.col, 10);
     if (!isNaN(line)) goToSource(line, col || 1);
   }
 });
