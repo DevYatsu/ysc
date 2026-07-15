@@ -93,7 +93,13 @@ nav .logo .hide-mobile { display: inline; }
 .playground-tab:hover { color: var(--text-secondary); }
 .playground-tab.active { color: var(--brand); border-bottom-color: var(--brand); }
 
-.line-ref { color: var(--green); font-size: 0.75rem; }
+.output-line { display: flex; gap: 0.75rem; align-items: baseline; }
+.output-line .line-num {
+  flex-shrink: 0; min-width: 3.5em; text-align: right;
+  color: var(--text-tertiary); font-size: 0.72rem;
+  user-select: none;
+}
+.output-line .line-val { color: var(--text); }
 .error-text { color: var(--red); }
 
 @media (max-width: 768px) {
@@ -356,7 +362,10 @@ function refresh() {
 function escape(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function formatLine(l) {
   const val = escape(l.value || '');
-  return l.line !== undefined ? '<span class="line-ref">[l.' + l.line + ']</span> ' + val : val;
+  if (l.line !== undefined) {
+    return '<span class="output-line"><span class="line-num">' + l.line + '</span><span class="line-val">' + val + '</span></span>';
+  }
+  return '<span class="output-line"><span class="line-val">' + val + '</span></span>';
 }
 
 function runCode(src) {
