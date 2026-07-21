@@ -2,31 +2,31 @@
 
 obj = {name: "Alice", age: 30, city: "Paris"}
 
-// .keys()
+// keys
 print("keys:")
-k = obj.keys()
+k = obj |> keys()
 print(len(k))                  // 3
 
-// .values()
+// values
 print("values:")
-v = obj.values()
+v = obj |> values()
 print(len(v))                  // 3
 
-// .has()
+// has
 print("has:")
-print(obj.has("name"))         // true
-print(obj.has("xyz"))          // false
+print(obj |> has("name"))         // true
+print(obj |> has("xyz"))          // false
 
-// .len()
+// len
 print("len:")
-print(obj.len())               // 3
+print(obj |> len())               // 3
 
 // Nested object
 nested = {a: {b: 1, c: 2}, d: 3}
 print("nested keys:")
-print(nested.len())            // 2
-print(nested.a.len())          // 2
-print(nested.a.b)              // 1
+print(nested |> len())            // 2
+print(nested.a |> len())          // 2
+print(nested.a.b)                 // 1
 
 // Object with various value types
 mixed = {num: 42, str: "hi", flag: true}

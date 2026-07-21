@@ -5,7 +5,7 @@ fun sieve(limit) {
   is_prime[1] = false
   for p in 2..limit {
     if is_prime[p] {
-      for i in (p + p..limit).step(p) {
+      for i in (p + p..limit) |> step(p) {
         is_prime[i] = false
       }
     }

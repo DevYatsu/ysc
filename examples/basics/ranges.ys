@@ -6,9 +6,9 @@ for i in 0..5 {
   print("  " + str(i))
 }
 
-// Stepped range via .step()
+// Stepped range via pipe
 print("even numbers:")
-for i in (0..10).step(2) {
+for i in (0..10) |> step(2) {
   print("  " + str(i))
 }
 
@@ -22,6 +22,6 @@ for i in r {
 // .step() can use variables
 step = 3
 print("every 3rd:")
-for i in (0..12).step(step) {
+for i in (0..12) |> step(step) {
   print("  " + str(i))
 }

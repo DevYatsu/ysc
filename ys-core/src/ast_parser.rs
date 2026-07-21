@@ -471,8 +471,11 @@ impl<'source> AstParser<'source> {
     fn parse_fallthrough_expr(&mut self) -> Result<AstNode, JitError> {
         let mut lhs = self.parse_range_expr()?;
 
-        // Pipe operator |>
-        while self.peek() == Some(Token::PipeForward) {
+        // Pipe operator |> — allows newlines before each pipe
+        while {
+            self.stream.skip_newlines();
+            self.peek() == Some(Token::PipeForward)
+        } {
             let loc = self.loc();
             self.advance()?; // consume |>
             let rhs = self.parse_pipe_rhs()?;

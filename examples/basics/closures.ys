@@ -1,13 +1,13 @@
 // Closures
 
 // Inline closure with single expression
-doubled = [1, 2, 3, 4, 5].map(|x| x * 2)
+doubled = [1, 2, 3, 4, 5] |> map(|x| x * 2)
 print("doubled:")
 print(doubled[0])
 print(doubled[4])
 
 // Closure with block body
-evens = [1, 2, 3, 4, 5, 6].filter(|x| {
+evens = [1, 2, 3, 4, 5, 6] |> filter(|x| {
   ret x % 2 == 0
 })
 print("evens:")
@@ -16,7 +16,7 @@ print(evens[1])
 print(evens[2])
 
 // Reduce with closure
-sum = [1, 2, 3, 4, 5].reduce(0, |acc, v| acc + v)
+sum = [1, 2, 3, 4, 5] |> reduce(0, |acc, v| acc + v)
 print("sum = " + str(sum))
 
 // Store closure in a variable
