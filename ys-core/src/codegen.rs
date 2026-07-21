@@ -350,33 +350,24 @@ impl Codegen {
 
             //  Calls
             AstNode::FunCall { name, args, loc } => {
-                self.compile_fun_call(name, args, *loc)
-            }
-            AstNode::MethodCall { obj, method, args, loc } => {
-                // Optimise `range.step(n)` — emit Range with step directly.
-                if method == "step" && args.len() == 1 {
-                    if let AstNode::Range { start, end, step: _existing_step, .. } = obj.as_ref() {
+                // Optimise `range |> step(n)` — emit Range with step directly.
+                if name == "step" && args.len() == 2 {
+                    if let AstNode::Range { start, end, step: _existing_step, .. } = &args[0] {
                         let start_r = self.compile_node(start)?;
                         let end_r = self.compile_node(end)?;
-                        let step_r = self.compile_node(&args[0])?;
+                        let step_r = self.compile_node(&args[1])?;
                         let dst = self.alloc_reg();
-                        self.emit(Instruction::Range { dst, start: start_r, end: end_r, step: Some(step_r), loc: *loc });
+                        self.emit(Instruction::Range {
+                            dst,
+                            start: start_r,
+                            end: end_r,
+                            step: Some(step_r),
+                            loc: *loc,
+                        });
                         return Ok(dst);
                     }
                 }
-                let obj_r = self.compile_node(obj)?;
-                let name_id = self.intern(method);
-                let m = self.alloc_reg();
-                self.emit(Instruction::ObjectGet { dst: m, obj: obj_r, name_id, loc: *loc });
-                let args_r = self.compile_args(args)?;
-                let dst = self.alloc_reg();
-                self.emit(Instruction::CallDynamic(Box::new(CallDynamicData {
-                    callee_reg: m,
-                    args_regs: Arc::from(args_r),
-                    dst: Some(dst),
-                    loc: *loc,
-                })));
-                Ok(dst)
+                self.compile_fun_call(name, args, *loc)
             }
             AstNode::DynamicCall { callee, args, loc } => {
                 let callee_r = self.compile_node(callee)?;
@@ -613,6 +604,12 @@ impl Codegen {
                 }
                 Ok(0)
             }
+
+            //  Method calls are desugared to pipe calls in the parser — should not reach codegen.
+            AstNode::MethodCall { loc, .. } => Err(JitError::parsing(
+                "Method calls are not supported in this version",
+                loc.line as usize, loc.col as usize,
+            )),
 
             //  Modules — not yet implemented in runtime, compile as no-op
             AstNode::Use { .. } => Ok(0),
