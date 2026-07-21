@@ -1330,24 +1330,6 @@ pub fn execute_bytecode(
                             let method = ctx.string_pool.get(*name_id as usize).map(|s| s.as_ref()).unwrap_or("");
                             let receiver = *receiver;
 
-                            if method == "step"
-                                && let Some(r_oid) = receiver.as_obj_id() {
-                                    let (start, end) = {
-                                        let heap = ctx.heap.objects.get();
-                                        let o = unsafe { heap.get_unchecked(r_oid as usize) };
-                                        o.as_ref()
-                                            .and_then(|o| if let ManagedObject::Range { start, end, .. } = &o.obj { Some((*start, *end)) } else { None })
-                                    }.unwrap_or((0.0, 0.0));
-                                    let args_regs = &*box_data.args_regs;
-                                    let new_step = args_regs.first().map(|&r| frames[fi].registers[r].as_number().unwrap_or(1.0)).unwrap_or(1.0);
-                                    let val = ctx.alloc(ManagedObject::Range { start, end, step: new_step });
-                                    if let Some(d) = dst {
-                                        frames[fi].registers[d] = val;
-                                    }
-                                    frames[fi].pc += 1;
-                                    continue;
-                                }
-
                             //  List method dispatch (all 18 methods)
                             if let Some(list_oid) = receiver.as_obj_id() {
                                 let elems = {

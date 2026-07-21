@@ -46,7 +46,31 @@ pub fn register(fns: &mut rustc_hash::FxHashMap<String, NativeFn>) {
     fns.insert("flat_map".into(),    Arc::new(native_flat_map));
     fns.insert("take".into(),        Arc::new(native_take));
     fns.insert("drop".into(),        Arc::new(native_drop));
+    fns.insert("step".into(),        Arc::new(native_step));
     fns.insert("unique".into(),      Arc::new(native_unique));
+}
+
+fn native_step(ctx: &Arc<Context>, args: &[Value]) -> Result<Value, JitError> {
+    let range_val = args.first().copied().unwrap_or(Value::from_bits(0));
+    let step_val = args.get(1).copied().unwrap_or(Value::from_bits(0));
+    let oid = range_val
+        .as_obj_id()
+        .ok_or_else(|| JitError::runtime("step: expected a range as first argument", 0, 0))?;
+    let step_num = step_val
+        .as_number()
+        .ok_or_else(|| JitError::runtime("step: step must be a number", 0, 0))?;
+    let objects = ctx.heap.objects.get();
+    let guard = objects.get(oid as usize).and_then(|o| o.as_ref());
+    match guard.map(|o| &o.obj) {
+        Some(ManagedObject::Range { start, end, step: _old_step }) => {
+            Ok(ctx.alloc(ManagedObject::Range {
+                start: *start,
+                end: *end,
+                step: step_num,
+            }))
+        }
+        _ => Err(JitError::runtime("step: expected a range", 0, 0)),
+    }
 }
 
 fn native_map(ctx: &Arc<Context>, args: &[Value]) -> Result<Value, JitError> {
