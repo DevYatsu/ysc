@@ -8,6 +8,9 @@ pub mod io;
 pub mod list_ops;
 #[cfg(feature = "networking")]
 pub mod net;
+pub mod number_ops;
+pub mod object_ops;
+pub mod string_ops;
 pub mod time;
 
 use crate::context::NativeFn;
@@ -18,6 +21,9 @@ pub fn register(fns: &mut FxHashMap<String, NativeFn>) {
     io::register(fns);
     collections::register(fns);
     list_ops::register(fns);
+    number_ops::register(fns);
+    object_ops::register(fns);
+    string_ops::register(fns);
     time::register(fns);
     #[cfg(feature = "networking")]
     net::register(fns);
