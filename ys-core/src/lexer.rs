@@ -242,6 +242,10 @@ pub enum Token<'source> {
     /// '!' logical NOT operator.
     #[token("!")]
     Not,
+    /// '|>' pipe-forward operator for chaining function calls.
+    #[token("|>")]
+    PipeForward,
+
     /// '|' pipe delimiter for closure parameter lists.
     #[token("|")]
     Pipe,

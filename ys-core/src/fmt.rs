@@ -90,7 +90,7 @@ fn token_display(t: &Token<'_>) -> String {
         Token::Gt => ">".into(),  Token::Ge => ">=".into(),
         Token::Equals => "=".into(),  Token::Not => "!".into(),
         Token::Dot => ".".into(),  Token::Range => "..".into(), Token::Arrow => "->".into(),
-        Token::Pipe => "|".into(),  Token::Colon => ":".into(), Token::Comma => ",".into(),
+        Token::PipeForward => "|>".into(), Token::Pipe => "|".into(),  Token::Colon => ":".into(), Token::Comma => ",".into(),
         Token::Semicolon => ";".into(),
         Token::PlusEq => "+=".into(), Token::MinusEq => "-=".into(), Token::MulEq => "*=".into(),
         Token::DivEq => "/=".into(), Token::ModEq => "%=".into(),
