@@ -605,12 +605,6 @@ impl Codegen {
                 Ok(0)
             }
 
-            //  Method calls are desugared to pipe calls in the parser — should not reach codegen.
-            AstNode::MethodCall { loc, .. } => Err(JitError::parsing(
-                "Method calls are not supported in this version",
-                loc.line as usize, loc.col as usize,
-            )),
-
             //  Modules — not yet implemented in runtime, compile as no-op
             AstNode::Use { .. } => Ok(0),
         }

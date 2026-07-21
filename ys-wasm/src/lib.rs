@@ -130,7 +130,6 @@ fn node_loc(node: &ys_core::ast::AstNode) -> Option<ys_core::compiler::Loc> {
         AstNode::For { loc, .. } => Some(*loc),
         AstNode::Return { loc, .. } => Some(*loc),
         AstNode::FunCall { loc, .. } => Some(*loc),
-        AstNode::MethodCall { loc, .. } => Some(*loc),
         AstNode::DynamicCall { loc, .. } => Some(*loc),
         AstNode::FunDecl { loc, .. } => Some(*loc),
         AstNode::AsyncFun { loc, .. } => Some(*loc),
@@ -254,14 +253,6 @@ fn ast_node_to_js(node: &ys_core::ast::AstNode) -> JsValue {
             for param in params { p.push(&param.into()); }
             js_sys::Reflect::set(&o, &"params".into(), &p.into()).ok();
             js_sys::Reflect::set(&o, &"body".into(), &ast_node_to_js(body)).ok();
-        }
-        AstNode::MethodCall { obj, method, args, .. } => {
-            js_sys::Reflect::set(&o, &"type".into(), &"method_call".into()).ok();
-            js_sys::Reflect::set(&o, &"object".into(), &ast_node_to_js(obj)).ok();
-            js_sys::Reflect::set(&o, &"method".into(), &method.into()).ok();
-            let arr = js_sys::Array::new();
-            for a in args { arr.push(&ast_node_to_js(a)); }
-            js_sys::Reflect::set(&o, &"args".into(), &arr.into()).ok();
         }
         AstNode::Index { obj, index, .. } => {
             js_sys::Reflect::set(&o, &"type".into(), &"index".into()).ok();

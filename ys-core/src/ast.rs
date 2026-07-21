@@ -67,7 +67,6 @@ pub enum AstNode {
 
     //  Calls
     FunCall { name: String, args: Vec<AstNode>, loc: Loc },
-    MethodCall { obj: Box<AstNode>, method: String, args: Vec<AstNode>, loc: Loc },
     DynamicCall { callee: Box<AstNode>, args: Vec<AstNode>, loc: Loc },
 
     //  Functions / Closures
