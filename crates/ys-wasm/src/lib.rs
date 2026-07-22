@@ -101,6 +101,15 @@ fn ast_block_to_js(block: &[ys_core::ast::AstNode]) -> JsValue {
     arr.into()
 }
 
+fn func_param_to_js(param: &ys_core::ast::FuncParam) -> JsValue {
+    let o = js_sys::Object::new();
+    js_sys::Reflect::set(&o, &"name".into(), &param.name.clone().into()).ok();
+    js_sys::Reflect::set(&o, &"hasDefault".into(), &JsValue::from(param.default.is_some())).ok();
+    js_sys::Reflect::set(&o, &"isRest".into(), &JsValue::from(param.is_rest)).ok();
+    js_sys::Reflect::set(&o, &"isKwargs".into(), &JsValue::from(param.is_kwargs)).ok();
+    o.into()
+}
+
 fn add_loc(o: &js_sys::Object, node: &ys_core::ast::AstNode) {
     if let Some(loc) = node_loc(node) {
         js_sys::Reflect::set(o, &"line".into(), &JsValue::from(loc.line)).ok();
@@ -146,6 +155,8 @@ fn node_loc(node: &ys_core::ast::AstNode) -> Option<ys_core::compiler::Loc> {
         AstNode::ListRepeat { loc, .. } => Some(*loc),
         AstNode::Template { loc, .. } => Some(*loc),
         AstNode::Binary { loc, .. } => Some(*loc),
+        AstNode::Splat(_, l) => Some(*l),
+        AstNode::Decorator { loc, .. } => Some(*loc),
     }
 }
 
@@ -204,7 +215,7 @@ fn ast_node_to_js(node: &ys_core::ast::AstNode) -> JsValue {
             js_sys::Reflect::set(&o, &"name".into(), &name.into()).ok();
             let p = js_sys::Array::new();
             for param in params {
-                p.push(&param.into());
+                p.push(&func_param_to_js(param));
             }
             js_sys::Reflect::set(&o, &"params".into(), &p.into()).ok();
             js_sys::Reflect::set(&o, &"body".into(), &ast_block_to_js(body)).ok();
@@ -265,7 +276,7 @@ fn ast_node_to_js(node: &ys_core::ast::AstNode) -> JsValue {
             js_sys::Reflect::set(&o, &"type".into(), &"closure".into()).ok();
             let p = js_sys::Array::new();
             for param in params {
-                p.push(&param.into());
+                p.push(&func_param_to_js(param));
             }
             js_sys::Reflect::set(&o, &"params".into(), &p.into()).ok();
             js_sys::Reflect::set(&o, &"body".into(), &ast_node_to_js(body)).ok();
