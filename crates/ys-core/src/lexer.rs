@@ -244,6 +244,9 @@ pub enum Token<'source> {
     #[token("|>")]
     PipeForward,
 
+    /// '@' decorator prefix.
+    #[token("@")]
+    At,
     /// '|' pipe delimiter for closure parameter lists.
     #[token("|")]
     Pipe,

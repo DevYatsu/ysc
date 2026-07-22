@@ -6,6 +6,7 @@ use crate::compiler::Loc;
 use crate::error::JitError;
 use crate::lexer::Token;
 use crate::token_stream::TokenStream;
+use rustc_hash::FxHashMap;
 
 pub(crate) mod expr;
 pub(crate) mod stmt;
@@ -28,7 +29,7 @@ pub(crate) fn is_stmt_end(t: Option<Token<'_>>) -> bool {
 pub(crate) fn parse_params_until<'source>(
     parser: &mut AstParser<'source>,
     end: Token<'source>,
-) -> Result<Vec<String>, JitError> {
+) -> Result<Vec<FuncParam>, JitError> {
     let mut params = Vec::new();
     loop {
         parser.stream.skip_newlines();
@@ -42,12 +43,21 @@ pub(crate) fn parse_params_until<'source>(
         if parser.peek() == Some(end) {
             break;
         }
-        params.push(parser.expect_ident()?.to_string());
-        // Optional type annotation `: TypeName` — parsed but ignored at runtime
-        if parser.peek() == Some(Token::Colon) {
+        // `.name` = rest positional, `..name` = kwargs
+        let (is_rest, is_kwargs) = match parser.peek() {
+            Some(Token::Range) => { parser.advance()?; (false, true) }
+            Some(Token::Dot) => { parser.advance()?; (true, false) }
+            _ => (false, false),
+        };
+        let name = parser.expect_ident()?.to_string();
+        // Only regular params can have defaults/type annotations
+        let default = if !is_rest && !is_kwargs && parser.peek() == Some(Token::Colon) {
             parser.advance()?;
-            parser.expect_ident()?;
-        }
+            Some(Box::new(parser.parse_expression()?))
+        } else {
+            None
+        };
+        params.push(FuncParam { name, default, is_rest, is_kwargs });
     }
     Ok(params)
 }
@@ -134,6 +144,20 @@ impl<'source> AstParser<'source> {
                 self.advance()?;
                 self.parse_statement()
             } // skip blank lines
+            Token::At => {
+                self.advance()?;
+                let name = self.expect_ident()?.to_string();
+                let (args, named) = if self.peek() == Some(Token::LParen) {
+                    self.advance()?;
+                    expr::parse_call_args(self)?
+                } else {
+                    (Vec::new(), FxHashMap::default())
+                };
+                let inner = self.parse_statement()?.ok_or_else(|| {
+                    JitError::parsing("Expected function after decorator", loc.as_error_pos())
+                })?;
+                Ok(Some(AstNode::Decorator { name, args, named, inner: Box::new(inner), loc }))
+            }
             Token::Fun => {
                 self.advance()?;
                 stmt::parse_fun_decl(self, false).map(Some)

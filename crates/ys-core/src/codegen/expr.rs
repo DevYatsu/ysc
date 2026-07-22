@@ -8,6 +8,7 @@ use super::Codegen;
 use crate::ast::*;
 use crate::compiler::*;
 use crate::error::JitError;
+use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
 // ---------------------------------------------------------------------------
@@ -85,38 +86,78 @@ pub(super) fn compile_fun_call(
     cg: &mut Codegen,
     name: &str,
     args: &[AstNode],
+    named: &FxHashMap<String, AstNode>,
     loc: Loc,
 ) -> Result<usize, JitError> {
-    let args_r: Vec<usize> = args
+    // Resolve named arguments + defaults: map names to positions, fill defaults.
+    // We clone default expressions to avoid borrowing `cg.fn_params` past the
+    // resolution step — the later `cg.compile_node()` needs mutable access.
+    let mut resolved: Vec<AstNode> = Vec::new();
+    if !named.is_empty() || cg.fn_params.contains_key(name) {
+        if let Some(params) = cg.fn_params.get(name).cloned() {
+            let pcount = params.len();
+            resolved = vec![AstNode::Nil(loc); pcount];
+            // Fill positional args
+            for (i, arg) in args.iter().enumerate().take(pcount) {
+                resolved[i] = arg.clone();
+            }
+            // Fill named args by parameter name
+            for (n, val) in named {
+                if let Some(pos) = params.iter().position(|p| p.name == *n) {
+                    resolved[pos] = val.clone();
+                }
+            }
+            // Fill defaults for missing params
+            for (i, param) in params.iter().enumerate() {
+                match &resolved[i] {
+                    AstNode::Nil(_) if param.default.is_some() => {
+                        resolved[i] = *param.default.as_ref().unwrap().clone();
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    if resolved.is_empty() {
+        resolved = args.to_vec();
+    }
+
+    let args_r: Vec<usize> = resolved
         .iter()
         .map(|a| cg.compile_node(a))
         .collect::<Result<_, _>>()?;
     let dst = cg.alloc_reg();
-    if let Some(info) = cg.get_var(name) {
+    // For decorated functions: load from global (may hold wrapped version).
+    if cg.decorated_fns.contains(name) {
+        if let Some(info) = cg.get_var(name) {
+            let callee_reg = cg.load_var(info);
+            for &r in &args_r { cg.free_reg(r); }
+            if info.is_global { cg.free_reg(callee_reg); }
+            cg.emit(Instruction::CallDynamic(CallDynamicData {
+                callee_reg, args_regs: Arc::from(args_r), dst: Some(dst), loc,
+            }));
+        } else {
+            // Global doesn't exist yet — function is being decorated.
+            // Use static dispatch so recursion still works.
+            for &r in &args_r { cg.free_reg(r); }
+            let name_id = cg.intern(name);
+            cg.emit(Instruction::Call(CallData {
+                name_id, args_regs: Arc::from(args_r), dst: Some(dst), loc,
+            }));
+        }
+    } else if let Some(info) = cg.get_var(name) {
         // Variable holding a callable — dynamic dispatch
         let callee_reg = cg.load_var(info);
-        for &r in &args_r {
-            cg.free_reg(r);
-        }
-        if info.is_global {
-            cg.free_reg(callee_reg);
-        }
+        for &r in &args_r { cg.free_reg(r); }
+        if info.is_global { cg.free_reg(callee_reg); }
         cg.emit(Instruction::CallDynamic(CallDynamicData {
-            callee_reg,
-            args_regs: Arc::from(args_r),
-            dst: Some(dst),
-            loc,
+            callee_reg, args_regs: Arc::from(args_r), dst: Some(dst), loc,
         }));
     } else {
-        for &r in &args_r {
-            cg.free_reg(r);
-        }
+        for &r in &args_r { cg.free_reg(r); }
         let name_id = cg.intern(name);
         cg.emit(Instruction::Call(CallData {
-            name_id,
-            args_regs: Arc::from(args_r),
-            dst: Some(dst),
-            loc,
+            name_id, args_regs: Arc::from(args_r), dst: Some(dst), loc,
         }));
     }
     Ok(dst)

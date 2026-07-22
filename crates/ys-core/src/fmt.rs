@@ -128,6 +128,7 @@ fn token_display(t: &Token<'_>) -> String {
         Token::Ge => ">=".into(),
         Token::Equals => "=".into(),
         Token::Not => "!".into(),
+        Token::At => "@".into(),
         Token::Dot => ".".into(),
         Token::Range => "..".into(),
         Token::Arrow => "->".into(),

@@ -4,8 +4,20 @@
 //! the codegen walks it to emit bytecode instructions.
 
 use crate::compiler::Loc;
+use rustc_hash::FxHashMap;
 
 pub type AstBlock = Vec<AstNode>;
+
+/// A function parameter with optional default value and rest/kwargs flags.
+#[derive(Debug, Clone)]
+pub struct FuncParam {
+    pub name: String,
+    pub default: Option<Box<AstNode>>,
+    /// `.name` — captures remaining positional args as a list.
+    pub is_rest: bool,
+    /// `..name` — captures remaining named args as an object.
+    pub is_kwargs: bool,
+}
 
 //  Operators
 
@@ -109,22 +121,36 @@ pub enum AstNode {
     //  Async / Await
     Await(Box<AstNode>, Loc),
 
+    /// `*expr` — unpack a list (→ positional args) or object (→ named args).
+    Splat(Box<AstNode>, Loc),
+
     //  Calls
     FunCall {
         name: String,
         args: Vec<AstNode>,
+        named: FxHashMap<String, AstNode>,
         loc: Loc,
     },
     DynamicCall {
         callee: Box<AstNode>,
         args: Vec<AstNode>,
+        named: FxHashMap<String, AstNode>,
+        loc: Loc,
+    },
+
+    //  Decorators
+    Decorator {
+        name: String,
+        args: Vec<AstNode>,
+        named: FxHashMap<String, AstNode>,
+        inner: Box<AstNode>,
         loc: Loc,
     },
 
     //  Functions / Closures
     FunDecl {
         name: String,
-        params: Vec<String>,
+        params: Vec<FuncParam>,
         body: AstBlock,
         exported: bool,
         loc: Loc,
@@ -133,12 +159,12 @@ pub enum AstNode {
     /// Async function — returns a Promise.
     AsyncFun {
         name: String,
-        params: Vec<String>,
+        params: Vec<FuncParam>,
         body: AstBlock,
         loc: Loc,
     },
     Closure {
-        params: Vec<String>,
+        params: Vec<FuncParam>,
         body: Box<AstNode>,
         is_move: bool,
         loc: Loc,

@@ -1,5 +1,6 @@
 use super::AstParser;
 use crate::ast::*;
+use rustc_hash::FxHashMap;
 use crate::compiler::Loc;
 use crate::error::JitError;
 use crate::lexer::Token;
@@ -26,10 +27,11 @@ pub(super) fn parse_fallthrough_expr<'source>(
             AstNode::FunCall {
                 name,
                 mut args,
+                named: _,
                 loc,
             } => {
                 args.insert(0, lhs);
-                lhs = AstNode::FunCall { name, args, loc };
+                lhs = AstNode::FunCall { name, args, named: rustc_hash::FxHashMap::default(), loc };
             }
             _ => {
                 return Err(JitError::parsing(
@@ -372,21 +374,11 @@ pub(super) fn parse_postfix_expr<'source>(
             // obj(args) → dynamic call
             Some(Token::LParen) => {
                 parser.advance()?;
-                let args = parse_call_args(parser)?;
-                // If left is an Ident, emit a static FunCall
-                // Otherwise it's a DynamicCall
+                let (args, named) = parse_call_args(parser)?;
                 if let AstNode::Ident(name, _) = &left {
-                    left = AstNode::FunCall {
-                        name: name.clone(),
-                        args,
-                        loc,
-                    };
+                    left = AstNode::FunCall { name: name.clone(), args, named, loc };
                 } else {
-                    left = AstNode::DynamicCall {
-                        callee: Box::new(left),
-                        args,
-                        loc,
-                    };
+                    left = AstNode::DynamicCall { callee: Box::new(left), args, named, loc };
                 }
             }
             // obj[index]
@@ -591,14 +583,28 @@ pub(super) fn parse_template<'source>(
 // Call args
 // ---------------------------------------------------------------------------
 
+/// Parse call arguments, returning `(positional_args, named_args)`.
+/// Named args use `name: expr` syntax: `f(1, verbose: true)`.
 pub(super) fn parse_call_args<'source>(
     parser: &mut AstParser<'source>,
-) -> Result<Vec<AstNode>, JitError> {
+) -> Result<(Vec<AstNode>, FxHashMap<String, AstNode>), JitError> {
     let mut args = Vec::new();
+    let mut named = FxHashMap::default();
     parser.stream.skip_newlines();
     if parser.peek() != Some(Token::RParen) {
         loop {
-            args.push(parser.parse_expression()?);
+            parser.stream.skip_newlines();
+            // Parse an expression; if it's a bare `Ident` followed by `:`,
+            // treat it as a named argument.
+            let expr = parser.parse_expression()?;
+            if matches!(&expr, AstNode::Ident(..)) && parser.peek() == Some(Token::Colon) {
+                let name = match &expr { AstNode::Ident(n, _) => n.clone(), _ => unreachable!() };
+                parser.advance()?; // consume `:`
+                let value = parser.parse_expression()?;
+                named.insert(name, value);
+            } else {
+                args.push(expr);
+            }
             parser.stream.skip_newlines();
             if parser.peek() == Some(Token::Comma) {
                 parser.advance()?;
@@ -608,7 +614,7 @@ pub(super) fn parse_call_args<'source>(
         }
     }
     parser.expect(Token::RParen)?;
-    Ok(args)
+    Ok((args, named))
 }
 
 // ---------------------------------------------------------------------------
@@ -623,8 +629,8 @@ pub(super) fn parse_pipe_rhs<'source>(
     let loc = parser.loc();
     let name = parser.expect_ident()?.to_string();
     parser.expect(Token::LParen)?;
-    let args = parse_call_args(parser)?;
-    Ok(AstNode::FunCall { name, args, loc })
+    let (args, named) = parse_call_args(parser)?;
+    Ok(AstNode::FunCall { name, args, named, loc })
 }
 
 // ---------------------------------------------------------------------------

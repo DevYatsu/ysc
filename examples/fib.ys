@@ -1,26 +1,10 @@
-// Fibonacci (recursive benchmark)
-TARGET = 28
-REPEAT = 5
-ANSWER = 317811
-
-fun fib(n) {
-  if n < 2 {
-    ret n
-  } else {
-    ret fib(n - 1) + fib(n - 2)
-  }
+fun wrap(fn_val) {
+  ret |x| "wrapped " + str(fn_val(x))
 }
 
-print("Running Fibonacci(" + str(TARGET) + ") x " + str(REPEAT) + " times...")
-print("Ready... Go!")
-result = 0
-start = time()
-for n in 0..REPEAT {
-  result = fib(TARGET)
+fun original(x) {
+  ret x + 1
 }
-elapsed = time() - start
-print("Finished. Run time = " + str(elapsed) + " seconds.")
-print("Fibonacci number //" + str(TARGET) + " = " + str(result))
-if result != ANSWER {
-  print("The answer is WRONG! Should be " + str(ANSWER) + "!")
-}
+
+wrapped = wrap(original)
+print(wrapped(10))

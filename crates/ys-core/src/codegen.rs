@@ -70,6 +70,13 @@ pub struct Codegen {
     /// Monotonically increasing counter for unique closure naming across all
     /// nesting levels.  Copied from parent when creating nested codegens.
     closure_counter: usize,
+
+    /// Function parameter lists for named-argument resolution at call sites.
+    /// Maps function name → ordered parameter list with defaults.
+    fn_params: FxHashMap<String, Vec<FuncParam>>,
+    /// Set of function names that have been decorated.  Calls to these
+    /// functions use dynamic dispatch so the decorator's result is invoked.
+    decorated_fns: FxHashSet<String>,
 }
 
 impl Default for Codegen {
@@ -97,6 +104,8 @@ impl Codegen {
             freed_regs: Vec::new(),
             var_mask: 0,
             closure_counter: 0,
+            fn_params: FxHashMap::default(),
+            decorated_fns: FxHashSet::default(),
         }
     }
 
@@ -522,7 +531,8 @@ impl Codegen {
                 body,
                 loc,
             } => {
-                func::compile_async_func(self, name, params, body, *loc);
+                let pn: Vec<String> = params.iter().map(|p| p.name.clone()).collect();
+                func::compile_async_func(self, name, &pn, body, *loc);
                 Ok(0)
             }
             AstNode::Await(expr, loc) => {
@@ -537,8 +547,12 @@ impl Codegen {
                 Ok(dst)
             }
 
+            //  Expression-level spread — evaluate the inner expr
+            //  (actual unpacking is handled in compile_fun_call's arg processing)
+            AstNode::Splat(inner, _) => self.compile_node(inner),
+
             //  Calls
-            AstNode::FunCall { name, args, loc } => {
+            AstNode::FunCall { name, args, named, loc } => {
                 // Optimise `range |> step(n)` — emit Range with step directly.
                 if name == "step" && args.len() == 2
                     && let AstNode::Range {
@@ -564,9 +578,9 @@ impl Codegen {
                         self.free_reg(step_r);
                         return Ok(dst);
                     }
-                expr::compile_fun_call(self, name, args, *loc)
+                expr::compile_fun_call(self, name, args, &named, *loc)
             }
-            AstNode::DynamicCall { callee, args, loc } => {
+            AstNode::DynamicCall { callee, args, named: _, loc } => {
                 let callee_r = self.compile_node(callee)?;
                 let args_r = expr::compile_args(self, args)?;
                 let dst = self.alloc_reg();
@@ -581,6 +595,69 @@ impl Codegen {
                     loc: *loc,
                 }));
                 Ok(dst)
+            }
+
+            //  Decorators — compile the inner function, then call the decorator.
+            //  The decorator receives the function NAME (pool string) as its
+            //  first argument, plus any additional decorator args.
+            AstNode::Decorator { name: dec_name, args, named: _, inner, loc } => {
+                let fn_name = match inner.as_ref() {
+                    AstNode::FunDecl { name, .. } => name.clone(),
+                    AstNode::AsyncFun { name, .. } => name.clone(),
+                    _ => return Err(JitError::runtime(
+                        "Decorator target must be a function declaration",
+                        loc.as_error_pos(),
+                    )),
+                };
+                // Mark as decorated so external calls use dynamic dispatch
+                // (loading the decorator's result from the global variable).
+                self.decorated_fns.insert(fn_name.clone());
+
+                // 1. Compile the inner function as normal
+                self.compile_node(inner)?;
+
+                // 2. Create a closure for the decorated function (so the
+                //    decorator can actually CALL it, not just see its name).
+                let fn_name_id = self.intern(&fn_name);
+                let fn_reg = self.alloc_reg();
+                self.emit(Instruction::MakeClosure {
+                    dst: fn_reg,
+                    name_id: fn_name_id,
+                    captures: Arc::from([]),
+                });
+
+                // 3. Ensure the global variable exists and store the ORIGINAL
+                //    closure first (so recursive calls work during the decorator).
+                let info = self.ensure_var(&fn_name);
+                if info.is_global {
+                    self.emit(Instruction::StoreGlobal { global: info.idx, src: fn_reg });
+                }
+
+                // 4. Compile decorator positional arguments
+                let mut arg_regs: Vec<usize> = vec![fn_reg];
+                for a in args {
+                    let r = self.compile_node(a)?;
+                    arg_regs.push(r);
+                }
+                for &r in &arg_regs[1..] { self.free_reg(r); }
+                self.free_reg(fn_reg);
+
+                // 5. Call the decorator
+                let dst_reg = self.alloc_reg();
+                let dec_name_id = self.intern(dec_name);
+                self.emit(Instruction::Call(CallData {
+                    name_id: dec_name_id,
+                    args_regs: Arc::from(arg_regs),
+                    dst: Some(dst_reg),
+                    loc: *loc,
+                }));
+
+                // 6. Overwrite with the decorator's result.
+                if info.is_global {
+                    self.emit(Instruction::StoreGlobal { global: info.idx, src: dst_reg });
+                }
+                self.free_reg(dst_reg);
+                Ok(0)
             }
 
             //  Functions & closures
@@ -599,7 +676,8 @@ impl Codegen {
                 self.current_error_kind = error_kind.clone();
 
                 // Compile the function body
-                func::compile_func(self, name, params, body, *loc);
+                let pn: Vec<String> = params.iter().map(|p| p.name.clone()).collect();
+                func::compile_func(self, name, &pn, body, *loc);
 
                 // Infer error kind from collected fail calls
                 if !self.current_fail_kinds.is_empty() {
@@ -630,7 +708,11 @@ impl Codegen {
                 body,
                 is_move: _,
                 loc,
-            } => func::compile_closure(self, params, body, *loc),
+            } => {
+                let pn: Vec<String> = params.iter().map(|p| p.name.clone()).collect();
+                func::compile_closure(self, &pn, body, *loc);
+                Ok(0)
+            },
 
             //  Collections
             AstNode::ListLit(elems, _) => {
