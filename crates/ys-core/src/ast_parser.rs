@@ -45,8 +45,14 @@ pub(crate) fn parse_params_until<'source>(
         }
         // `.name` = rest positional, `..name` = kwargs
         let (is_rest, is_kwargs) = match parser.peek() {
-            Some(Token::Range) => { parser.advance()?; (false, true) }
-            Some(Token::Dot) => { parser.advance()?; (true, false) }
+            Some(Token::Range) => {
+                parser.advance()?;
+                (false, true)
+            }
+            Some(Token::Dot) => {
+                parser.advance()?;
+                (true, false)
+            }
             _ => (false, false),
         };
         let name = parser.expect_ident()?.to_string();
@@ -57,7 +63,12 @@ pub(crate) fn parse_params_until<'source>(
         } else {
             None
         };
-        params.push(FuncParam { name, default, is_rest, is_kwargs });
+        params.push(FuncParam {
+            name,
+            default,
+            is_rest,
+            is_kwargs,
+        });
     }
     Ok(params)
 }
@@ -156,7 +167,13 @@ impl<'source> AstParser<'source> {
                 let inner = self.parse_statement()?.ok_or_else(|| {
                     JitError::parsing("Expected function after decorator", loc.as_error_pos())
                 })?;
-                Ok(Some(AstNode::Decorator { name, args, named, inner: Box::new(inner), loc }))
+                Ok(Some(AstNode::Decorator {
+                    name,
+                    args,
+                    named,
+                    inner: Box::new(inner),
+                    loc,
+                }))
             }
             Token::Fun => {
                 self.advance()?;

@@ -1,10 +1,18 @@
-// Fibonacci with decorator-based caching (closure captures not yet implemented,
-// so this uses a simpler inline approach for now)
 
 fun fib(x) {
-  if x <= 1 { ret x }
+  if x < 2 { ret x }
   ret fib(x - 1) + fib(x - 2)
 }
 
-print("fib(10) = " + str(fib(10)))
-print("fib(20) = " + str(fib(20)))
+TARGET = 28
+REPEAT = 5
+ANSWER = 317_811
+
+result = 0
+for i in 0..REPEAT {
+    result = fib(TARGET)
+}
+
+if result != ANSWER {
+    print("wrong answer: expected " + ANSWER + ", got " + result)
+}

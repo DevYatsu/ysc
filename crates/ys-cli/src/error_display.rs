@@ -135,7 +135,7 @@ fn parse_error_hints(msg: &str, loc: &ErrorLoc, source: &str) -> Vec<Hint> {
                 kind: HintKind::Help,
             },
             Hint {
-                message: format!("try adding '{{' after the condition/parameters"),
+                message: "try adding '{' after the condition/parameters".to_string(),
                 kind: HintKind::Help,
             },
         ];
@@ -324,12 +324,10 @@ fn runtime_error_hints(msg: &str, loc: &ErrorLoc, source: &str) -> Vec<Hint> {
         });
         if let Some(pos) = line_str.find('+') {
             let left = line_str[..pos]
-                .trim()
                 .split_whitespace()
                 .last()
                 .unwrap_or("");
             let right = line_str[pos + 1..]
-                .trim()
                 .split_whitespace()
                 .next()
                 .unwrap_or("");
@@ -483,11 +481,11 @@ fn levenshtein(a: &str, b: &str) -> usize {
     let a: Vec<char> = a.chars().collect();
     let b: Vec<char> = b.chars().collect();
     let mut dp = vec![vec![0usize; b.len() + 1]; a.len() + 1];
-    for i in 0..=a.len() {
-        dp[i][0] = i;
+    for (i, row) in dp.iter_mut().enumerate().take(a.len() + 1) {
+        row[0] = i;
     }
-    for j in 0..=b.len() {
-        dp[0][j] = j;
+    for (j, val) in dp[0].iter_mut().enumerate().take(b.len() + 1) {
+        *val = j;
     }
     for i in 1..=a.len() {
         for j in 1..=b.len() {
@@ -547,7 +545,7 @@ fn highlight_line(line: &str) -> String {
                     || !rest
                         .as_bytes()
                         .get(kw.len())
-                        .map_or(false, |c| c.is_ascii_alphanumeric() || *c == b'_'))
+                        .is_some_and(|c| c.is_ascii_alphanumeric() || *c == b'_'))
         }) {
             out.push_str(&kw.cyan().to_string());
             i += kw.len();

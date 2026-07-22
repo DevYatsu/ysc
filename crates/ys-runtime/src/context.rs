@@ -71,7 +71,6 @@ impl<'a> NativeCtx<'a> {
         Self { ctx }
     }
 
-
     /// Allocate a new heap object and return its NaN-boxed reference.
     #[inline]
     pub fn alloc(&self, obj: ManagedObject) -> Value {
@@ -167,7 +166,8 @@ impl<'a> AsRef<Context> for NativeCtx<'a> {
 /// Store for native function implementations.
 /// Synchronous native function — no async overhead.
 /// For async I/O (fetch/serve) use a separate mechanism.
-pub type NativeFn = Arc<dyn for<'a> Fn(&NativeCtx<'a>, &[Value]) -> Result<Value, JitError> + Send + Sync>;
+pub type NativeFn =
+    Arc<dyn for<'a> Fn(&NativeCtx<'a>, &[Value]) -> Result<Value, JitError> + Send + Sync>;
 
 /// Any object that can be called (either a user-defined function or a native builtin).
 #[derive(Clone)]
@@ -206,7 +206,9 @@ pub struct Context {
 }
 
 impl Default for Context {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Context {
@@ -319,9 +321,10 @@ impl Context {
         }
         // Pool strings have their own tag to avoid ID collision with heap objects.
         if let Some(id) = v.as_pool_id()
-            && (id as usize) < self.string_pool.len() {
-                return Some(Cow::Borrowed(&self.string_pool[id as usize]));
-            }
+            && (id as usize) < self.string_pool.len()
+        {
+            return Some(Cow::Borrowed(&self.string_pool[id as usize]));
+        }
         if let Some(oid) = v.as_obj_id() {
             let heap = self.heap.objects.get();
             if let Some(Some(obj)) = heap.get(oid as usize)

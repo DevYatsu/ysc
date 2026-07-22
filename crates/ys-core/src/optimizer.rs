@@ -98,13 +98,12 @@ fn constant_fold(node: AstNode) -> AstNode {
                         return AstNode::Block(then_block, loc);
                     }
                 }
-                AstNode::Bool(false, _)
-                    if then_block.is_empty() => {
-                        if else_block.len() == 1 {
-                            return else_block.into_iter().next().unwrap();
-                        }
-                        return AstNode::Block(else_block, loc);
+                AstNode::Bool(false, _) if then_block.is_empty() => {
+                    if else_block.len() == 1 {
+                        return else_block.into_iter().next().unwrap();
                     }
+                    return AstNode::Block(else_block, loc);
+                }
                 _ => {}
             }
             AstNode::If {

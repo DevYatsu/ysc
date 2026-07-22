@@ -5,7 +5,7 @@
 
 use crate::context::{Context, NativeCtx};
 use crate::heap::ManagedObject;
-use crate::natives::{NativeRegistry, alloc_string};
+use crate::natives::NativeRegistry;
 use crate::vm::PromiseState;
 use std::borrow::Cow;
 use std::sync::Arc;
@@ -46,18 +46,15 @@ fn native_fetch(ctx: &NativeCtx, args: &[Value]) -> Result<Value, JitError> {
             )
         })?;
 
-    let xhr = web_sys::XmlHttpRequest::new().map_err(|_| {
-        JitError::runtime("fetch: failed to create XMLHttpRequest", (0, 0))
-    })?;
+    let xhr = web_sys::XmlHttpRequest::new()
+        .map_err(|_| JitError::runtime("fetch: failed to create XMLHttpRequest", (0, 0)))?;
 
     // Open a synchronous request (blocks until complete).
-    xhr.open_with_async("GET", &url, false).map_err(|_| {
-        JitError::runtime("fetch: failed to open request", (0, 0))
-    })?;
+    xhr.open_with_async("GET", &url, false)
+        .map_err(|_| JitError::runtime("fetch: failed to open request", (0, 0)))?;
 
-    xhr.send().map_err(|_| {
-        JitError::runtime("fetch: failed to send request", (0, 0))
-    })?;
+    xhr.send()
+        .map_err(|_| JitError::runtime("fetch: failed to send request", (0, 0)))?;
 
     let _status = xhr.status();
     let text = match xhr.response_text() {
@@ -155,7 +152,7 @@ fn native_serve(ctx: &NativeCtx, args: &[Value]) -> Result<Value, JitError> {
             return Err(JitError::runtime(
                 format!("serve: unknown handler '{}'", handler_name),
                 (0, 0),
-            ))
+            ));
         }
     };
 
@@ -173,8 +170,7 @@ fn native_serve(ctx: &NativeCtx, args: &[Value]) -> Result<Value, JitError> {
                             Ok(n) if n > 0 => n,
                             _ => return,
                         };
-                        let req_data =
-                            String::from_utf8_lossy(&buf[..n]).to_string();
+                        let req_data = String::from_utf8_lossy(&buf[..n]).to_string();
 
                         // Channel to receive the HTTP response from the event loop.
                         let (tx, rx) = std::sync::mpsc::sync_channel(1);

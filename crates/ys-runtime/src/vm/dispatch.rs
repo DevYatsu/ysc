@@ -161,6 +161,7 @@ pub(crate) fn set_call_loc(line: u32, col: u32) {
 
 /// Read the call location set by the most recent [`set_call_loc`] call.
 /// Used by wasm32 `print()` to annotate output with source locations.
+#[cfg(target_arch = "wasm32")]
 pub(crate) fn get_call_loc() -> Option<(u32, u32)> {
     CALL_LOC.with(|loc| loc.get())
 }
@@ -200,7 +201,8 @@ pub fn dispatch_callable(
         }
         Callable::User(f) => {
             let min_args = f.rest_at.unwrap_or(f.params_count);
-            if args_regs.len() < min_args || (f.rest_at.is_none() && args_regs.len() != f.params_count)
+            if args_regs.len() < min_args
+                || (f.rest_at.is_none() && args_regs.len() != f.params_count)
             {
                 return Err(JitError::runtime(
                     format!(
@@ -216,7 +218,13 @@ pub fn dispatch_callable(
                 build_call_registers(f.locals_count, args_regs, &frames[fi].registers);
             // If there's a rest param, collect remaining args into a list.
             if let Some(rest_at) = f.rest_at {
-                apply_rest(ctx, &mut callee_regs, args_regs, &frames[fi].registers, rest_at);
+                apply_rest(
+                    ctx,
+                    &mut callee_regs,
+                    args_regs,
+                    &frames[fi].registers,
+                    rest_at,
+                );
             }
             frames.push(CallFrame {
                 instructions: InstrPtr::from_arc(&f.instructions),

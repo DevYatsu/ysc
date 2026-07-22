@@ -42,10 +42,7 @@ impl NativeRegistry {
     /// of `Arc::new(|...| ...)`.
     pub fn insert<F>(&mut self, name: &'static str, func: F)
     where
-        F: Fn(&NativeCtx<'_>, &[Value]) -> Result<Value, JitError>
-            + Send
-            + Sync
-            + 'static,
+        F: Fn(&NativeCtx<'_>, &[Value]) -> Result<Value, JitError> + Send + Sync + 'static,
     {
         self.fns.insert(name, Arc::new(func));
     }

@@ -31,13 +31,14 @@ fn handle_object_get_by_key(obj_val: Value, key: &str, ctx: &Context) -> GetResu
         let heap = ctx.heap.objects.get();
         let obj = unsafe { heap.get_unchecked(oid as usize) };
         if let Some(obj) = obj
-            && let ManagedObject::Object(d) = &obj.obj {
-                let name_id = ctx.pool_id(key);
-                match name_id.and_then(|id| d.map.get(&id)) {
-                    Some(val) => return GetResult::Value(*val),
-                    None => return GetResult::Error(format!("Object has no field '{}'", key)),
-                }
+            && let ManagedObject::Object(d) = &obj.obj
+        {
+            let name_id = ctx.pool_id(key);
+            match name_id.and_then(|id| d.map.get(&id)) {
+                Some(val) => return GetResult::Value(*val),
+                None => return GetResult::Error(format!("Object has no field '{}'", key)),
             }
+        }
     }
     GetResult::Error("Expected an object for field access".into())
 }

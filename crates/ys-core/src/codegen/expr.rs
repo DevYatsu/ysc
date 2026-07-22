@@ -118,33 +118,35 @@ pub(super) fn compile_fun_call(
 
         // Fill named args by parameter name.
         for (n, val) in named {
-            if let Some(pos) = params.iter().position(|p| p.name == *n) {
-                if pos < resolved.len() {
+            if let Some(pos) = params.iter().position(|p| p.name == *n)
+                && pos < resolved.len() {
                     resolved[pos] = val.clone();
                 }
-            }
         }
 
         // Fill defaults for missing params (skip rest — it captures remaining).
         for (i, param) in params.iter().enumerate() {
-            if param.is_rest { continue; }
-            if i >= resolved.len() || matches!(resolved[i], AstNode::Nil(_)) {
-                if let Some(ref default) = param.default {
-                    if i >= resolved.len() { resolved.resize(i + 1, AstNode::Nil(loc)); }
+            if param.is_rest {
+                continue;
+            }
+            if (i >= resolved.len() || matches!(resolved[i], AstNode::Nil(_)))
+                && let Some(ref default) = param.default {
+                    if i >= resolved.len() {
+                        resolved.resize(i + 1, AstNode::Nil(loc));
+                    }
                     resolved[i] = *default.clone();
                 }
-            }
         }
 
         // For kwargs, collect unmatched named args into an object.
-        if kwargs_idx.is_some() {
+        if let Some(kwargs_pos) = kwargs_idx {
             let extra_named: Vec<(String, AstNode)> = named
                 .iter()
                 .filter(|(n, _)| !params.iter().any(|p| p.name == **n && !p.is_kwargs))
                 .map(|(n, v)| (n.clone(), v.clone()))
                 .collect();
-            if kwargs_idx.unwrap() < resolved.len() {
-                resolved[kwargs_idx.unwrap()] = AstNode::ObjectLit(extra_named, loc);
+            if kwargs_pos < resolved.len() {
+                resolved[kwargs_pos] = AstNode::ObjectLit(extra_named, loc);
             }
         }
     }
@@ -161,33 +163,57 @@ pub(super) fn compile_fun_call(
     if cg.decorated_fns.contains(name) {
         if let Some(info) = cg.get_var(name) {
             let callee_reg = cg.load_var(info);
-            for &r in &args_r { cg.free_reg(r); }
-            if info.is_global { cg.free_reg(callee_reg); }
+            for &r in &args_r {
+                cg.free_reg(r);
+            }
+            if info.is_global {
+                cg.free_reg(callee_reg);
+            }
             cg.emit(Instruction::CallDynamic(CallDynamicData {
-                callee_reg, args_regs: Arc::from(args_r), dst: Some(dst), loc,
+                callee_reg,
+                args_regs: Arc::from(args_r),
+                dst: Some(dst),
+                loc,
             }));
         } else {
             // Global doesn't exist yet — function is being decorated.
             // Use static dispatch so recursion still works.
-            for &r in &args_r { cg.free_reg(r); }
+            for &r in &args_r {
+                cg.free_reg(r);
+            }
             let name_id = cg.intern(name);
             cg.emit(Instruction::Call(CallData {
-                name_id, args_regs: Arc::from(args_r), dst: Some(dst), loc,
+                name_id,
+                args_regs: Arc::from(args_r),
+                dst: Some(dst),
+                loc,
             }));
         }
     } else if let Some(info) = cg.get_var(name) {
         // Variable holding a callable — dynamic dispatch
         let callee_reg = cg.load_var(info);
-        for &r in &args_r { cg.free_reg(r); }
-        if info.is_global { cg.free_reg(callee_reg); }
+        for &r in &args_r {
+            cg.free_reg(r);
+        }
+        if info.is_global {
+            cg.free_reg(callee_reg);
+        }
         cg.emit(Instruction::CallDynamic(CallDynamicData {
-            callee_reg, args_regs: Arc::from(args_r), dst: Some(dst), loc,
+            callee_reg,
+            args_regs: Arc::from(args_r),
+            dst: Some(dst),
+            loc,
         }));
     } else {
-        for &r in &args_r { cg.free_reg(r); }
+        for &r in &args_r {
+            cg.free_reg(r);
+        }
         let name_id = cg.intern(name);
         cg.emit(Instruction::Call(CallData {
-            name_id, args_regs: Arc::from(args_r), dst: Some(dst), loc,
+            name_id,
+            args_regs: Arc::from(args_r),
+            dst: Some(dst),
+            loc,
         }));
     }
     Ok(dst)

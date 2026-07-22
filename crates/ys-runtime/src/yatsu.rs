@@ -338,10 +338,10 @@ impl Yatsu {
                 if self.ctx.callables_by_name.get().contains_key(name) {
                     // Return a function reference (string value for now)
                     let val = Value::sso(name).unwrap_or_else(|| {
-                        
-                        self.ctx.alloc(crate::heap::ManagedObject::String(
-                            std::sync::Arc::from(name.to_string()),
-                        ))
+                        self.ctx
+                            .alloc(crate::heap::ManagedObject::String(std::sync::Arc::from(
+                                name.to_string(),
+                            )))
                     });
                     R::from_ysc(val, &self.ctx)
                 } else {
@@ -481,10 +481,11 @@ impl Yatsu {
         let mut found = None;
         for (i, g) in globals.iter().enumerate() {
             if let Some(s) = g.as_sso_str()
-                && &s[..name.len()] == name.as_bytes() {
-                    found = Some(i);
-                    break;
-                }
+                && &s[..name.len()] == name.as_bytes()
+            {
+                found = Some(i);
+                break;
+            }
         }
         if let Some(idx) = found {
             globals[idx] = module_obj;

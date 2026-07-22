@@ -70,9 +70,10 @@ pub fn run_interpreter(program: Program) -> Result<(), JitError> {
     let mut callables_by_name: FxHashMap<String, Callable> = FxHashMap::default();
     for (name_id, callable) in callables.iter().enumerate() {
         if let Some(c) = callable
-            && let Some(name) = program.string_pool.get(name_id) {
-                callables_by_name.insert(name.to_string(), c.clone());
-            }
+            && let Some(name) = program.string_pool.get(name_id)
+        {
+            callables_by_name.insert(name.to_string(), c.clone());
+        }
     }
     // Native functions whose names weren't in any source file's string pool
     // still need to be accessible via string lookup.
@@ -214,7 +215,9 @@ pub fn run_interpreter(program: Program) -> Result<(), JitError> {
                     .get()
                     .get(task.name_id as usize)
                     .and_then(|c| c.as_ref());
-                let Some(Callable::User(f)) = callable else { continue; };
+                let Some(Callable::User(f)) = callable else {
+                    continue;
+                };
 
                 let mut registers = vec![Value::nil(); f.locals_count];
                 if !registers.is_empty() {
@@ -237,10 +240,7 @@ pub fn run_interpreter(program: Program) -> Result<(), JitError> {
                         }
                     }
                     Err(e) => {
-                        format!(
-                            "HTTP/1.1 500 Internal Server Error\r\n\r\nError: {:?}",
-                            e
-                        )
+                        format!("HTTP/1.1 500 Internal Server Error\r\n\r\nError: {:?}", e)
                     }
                 };
                 let _ = task.response_tx.send(response);
@@ -357,10 +357,10 @@ pub fn run_interpreter(program: Program) -> Result<(), JitError> {
                                 results: res,
                                 ..
                             }) = &mut slot.obj
-                            {
-                                *sp = updated_sp;
-                                *res = resolved_vals;
-                            }
+                        {
+                            *sp = updated_sp;
+                            *res = resolved_vals;
+                        }
                     }
                     new_tasks.push(task_val);
                 } else {

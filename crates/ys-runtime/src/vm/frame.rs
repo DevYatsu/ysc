@@ -65,19 +65,17 @@ pub struct FrameState {
 /// `Arc::clone` per call.  For async/generator continuations, the `Arc` is
 /// reconstructed from `func_name_id` at suspension time.
 pub struct CallFrame {
-    pub instructions:  InstrPtr,
+    pub instructions: InstrPtr,
     /// `Some(name_id)` for framed function calls, `None` for the top-level frame.
     /// Used by `Yield`/`Await` to reconstruct an `Arc<[Instruction]>` for the
     /// continuation without paying the atomic increment on every call.
-    pub func_name_id:  Option<u32>,
-    pub registers:     Vec<Value>,
-    pub pc:            usize,
-    pub return_to:     Option<ReturnTarget>,
+    pub func_name_id: Option<u32>,
+    pub registers: Vec<Value>,
+    pub pc: usize,
+    pub return_to: Option<ReturnTarget>,
     /// Inline cache for `ObjectGet` — remembers recent (object_id, name_id, value)
     /// lookups to skip `FxHashMap` probing on repeated property access.
-    pub obj_cache:     Vec<(u32, u32, Value)>,
-
-
+    pub obj_cache: Vec<(u32, u32, Value)>,
 }
 
 impl CallFrame {

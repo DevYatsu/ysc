@@ -31,7 +31,7 @@ pub(crate) use collections::{
     GetResult, handle_list_get, handle_list_set, handle_object_get, handle_object_set,
 };
 pub(crate) use dispatch::{
-    apply_rest, build_call_registers, build_closure_registers, dispatch_callable, get_call_loc,
+    build_call_registers, build_closure_registers, dispatch_callable,
     make_registers, pool_regs, set_call_loc,
 };
 pub(crate) use frame::{
@@ -165,16 +165,16 @@ pub fn execute_bytecode(
     start_pc: usize,
 ) -> Result<Value, JitError> {
     //  Frame stack
-        let mut frames = Vec::with_capacity(256);
-        frames.push(CallFrame {
-            instructions: InstrPtr::from_arc(instructions),
-            func_name_id: None,
-            registers,
-            pc: start_pc,
-            return_to: None,
-            obj_cache: Vec::new(),
-        });
-        set_current_frames(&frames);
+    let mut frames = Vec::with_capacity(256);
+    frames.push(CallFrame {
+        instructions: InstrPtr::from_arc(instructions),
+        func_name_id: None,
+        registers,
+        pc: start_pc,
+        return_to: None,
+        obj_cache: Vec::new(),
+    });
+    set_current_frames(&frames);
 
     loop {
         let fi = match frames.len() {
@@ -216,9 +216,10 @@ pub fn execute_bytecode(
             Instruction::Increment(reg) => {
                 let fr = unsafe { frames.get_unchecked_mut(fi) };
                 let v = fr[*reg];
-                if (v.to_bits() & (QNAN | TAG_FAILURE)) != (QNAN | TAG_FAILURE) {
-                    if let Some(n) = v.as_number() { fr[*reg] = Value::number(n + 1.0); }
-                }
+                if (v.to_bits() & (QNAN | TAG_FAILURE)) != (QNAN | TAG_FAILURE)
+                    && let Some(n) = v.as_number() {
+                        fr[*reg] = Value::number(n + 1.0);
+                    }
                 fr.advance();
                 continue;
             }
@@ -244,12 +245,17 @@ pub fn execute_bytecode(
                 }
                 return Ok(ret);
             }
-            Instruction::Jump(target) => { frames[fi].jump_to(*target); continue; }
+            Instruction::Jump(target) => {
+                frames[fi].jump_to(*target);
+                continue;
+            }
             Instruction::JumpIfNotLess { var, end, target } => {
                 let fr = unsafe { frames.get_unchecked_mut(fi) };
-                if let (Some(vn), Some(en)) = (fr[*var].as_number(), fr[*end].as_number()) {
-                    if vn >= en { fr.jump_to(*target); continue; }
-                }
+                if let (Some(vn), Some(en)) = (fr[*var].as_number(), fr[*end].as_number())
+                    && vn >= en {
+                        fr.jump_to(*target);
+                        continue;
+                    }
                 fr.advance();
                 continue;
             }
@@ -447,9 +453,9 @@ pub fn execute_bytecode(
                                     && let ManagedObject::Promise(PromiseState::Pending {
                                         continuation: c,
                                     }) = &mut slot.obj
-                                    {
-                                        *c = Some(continuation);
-                                    }
+                                {
+                                    *c = Some(continuation);
+                                }
                             }
                             let frame = frames.pop().unwrap();
                             let ci = frames.len() - 1;
@@ -540,7 +546,12 @@ pub fn execute_bytecode(
                 }
                 fr.advance();
             }
-            Instruction::AddNumFast { dst, lhs, rhs, loc: _ } => {
+            Instruction::AddNumFast {
+                dst,
+                lhs,
+                rhs,
+                loc: _,
+            } => {
                 // Pure f64 addition — no failure/string checks.
                 // Compiler emits this only when both operands are known numeric.
                 let fr = unsafe { frames.get_unchecked_mut(fi) };
@@ -935,8 +946,7 @@ pub fn execute_bytecode(
                 loc,
             } => {
                 let fr = unsafe { frames.get_unchecked_mut(fi) };
-                if let Err(msg) =
-                    handle_list_set(&fr.registers, *list, *index_reg, *src, ctx, *loc)
+                if let Err(msg) = handle_list_set(&fr.registers, *list, *index_reg, *src, ctx, *loc)
                 {
                     return Err(JitError::runtime(msg, loc.as_error_pos()));
                 }
@@ -968,7 +978,10 @@ pub fn execute_bytecode(
                 let obj_reg = fr[*obj];
                 // Inline cache: check cached (object_id, name_id) pairs first.
                 let cached = obj_reg.as_obj_id().and_then(|oid| {
-                    fr.obj_cache.iter().rev().find(|(co, cn, _)| *co == oid && *cn == *name_id)
+                    fr.obj_cache
+                        .iter()
+                        .rev()
+                        .find(|(co, cn, _)| *co == oid && *cn == *name_id)
                         .map(|&(_, _, v)| v)
                 });
                 let val = match cached {
@@ -977,7 +990,9 @@ pub fn execute_bytecode(
                         GetResult::Value(v) => {
                             // Cache the result for repeated access.
                             if let Some(oid) = obj_reg.as_obj_id() {
-                                if fr.obj_cache.len() >= 8 { fr.obj_cache.clear(); }
+                                if fr.obj_cache.len() >= 8 {
+                                    fr.obj_cache.clear();
+                                }
                                 fr.obj_cache.push((oid, *name_id, v));
                             }
                             v
@@ -1093,7 +1108,8 @@ pub fn execute_bytecode(
                             Callable::User(f) => {
                                 let min_args = f.rest_at.unwrap_or(f.params_count);
                                 if box_data.args_regs.len() < min_args
-                                    || (f.rest_at.is_none() && box_data.args_regs.len() != f.params_count)
+                                    || (f.rest_at.is_none()
+                                        && box_data.args_regs.len() != f.params_count)
                                 {
                                     return Err(JitError::runtime(
                                         format!(
@@ -1251,14 +1267,15 @@ pub fn execute_bytecode(
                             &box_data.args_regs,
                             &frames[fi].registers,
                             loc,
-                        )? {
-                            if let Some(d) = dst {
-                                frames[fi][d] = result;
-                            }
-                            frames[fi].advance();
-                            continue;
+                        )?
+                    {
+                        if let Some(d) = dst {
+                            frames[fi][d] = result;
                         }
-                        // Not a known built-in method — fall through to closure or pool-string lookup
+                        frames[fi].advance();
+                        continue;
+                    }
+                    // Not a known built-in method — fall through to closure or pool-string lookup
 
                     // Closure dispatch — call a closure's captured function.
                     if let Some(o) = o
@@ -1286,7 +1303,8 @@ pub fn execute_bytecode(
                             return Err(JitError::runtime(
                                 format!(
                                     "Closure arity mismatch: expected {}, got {}",
-                                    func.params_count, args_regs.len()
+                                    func.params_count,
+                                    args_regs.len()
                                 ),
                                 loc.as_error_pos(),
                             ));
@@ -1305,7 +1323,7 @@ pub fn execute_bytecode(
                             registers: callee_regs,
                             pc: 0,
                             return_to: ret,
-                             obj_cache: Vec::new(),
+                            obj_cache: Vec::new(),
                         });
                         continue;
                     }

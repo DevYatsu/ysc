@@ -112,7 +112,6 @@ impl Codegen {
     //  Helpers
 
     fn alloc_reg(&mut self) -> usize {
-        
         self.freed_regs.pop().unwrap_or_else(|| {
             let r = self.next_reg;
             self.next_reg += 1;
@@ -200,11 +199,13 @@ impl Codegen {
         let last_reg = cg.compile_block(&ast)?;
         // If the last expression left a value in a register and there is no
         // explicit Return, emit one so exec() returns the expression result.
-        if let Some(reg) = last_reg {
-            if !matches!(cg.instructions.last(), Some(Instruction::Return { .. })) {
-                cg.emit(Instruction::Return { value: Some(reg), loc: Loc::ZERO });
+        if let Some(reg) = last_reg
+            && !matches!(cg.instructions.last(), Some(Instruction::Return { .. })) {
+                cg.emit(Instruction::Return {
+                    value: Some(reg),
+                    loc: Loc::ZERO,
+                });
             }
-        }
         Ok(Program {
             instructions: Arc::from(cg.instructions),
             functions: Arc::from(cg.functions),
@@ -247,7 +248,11 @@ impl Codegen {
                 BinOp::Add => Self::is_numeric_expr(lhs) && Self::is_numeric_expr(rhs),
                 _ => false,
             },
-            AstNode::Unary { op: UnaryOp::Neg, expr, .. } => Self::is_numeric_expr(expr),
+            AstNode::Unary {
+                op: UnaryOp::Neg,
+                expr,
+                ..
+            } => Self::is_numeric_expr(expr),
             _ => false,
         }
     }
@@ -321,7 +326,12 @@ impl Codegen {
                     // When both operands are provably numeric emit the
                     // unchecked AddNumFast, saving the failure + string checks.
                     BinOp::Add if Self::is_numeric_expr(lhs) && Self::is_numeric_expr(rhs) => {
-                        Instruction::AddNumFast { dst, lhs: l, rhs: r, loc: *loc }
+                        Instruction::AddNumFast {
+                            dst,
+                            lhs: l,
+                            rhs: r,
+                            loc: *loc,
+                        }
                     }
                     BinOp::Add => Instruction::AddNum {
                         dst,
@@ -552,35 +562,46 @@ impl Codegen {
             AstNode::Splat(inner, _) => self.compile_node(inner),
 
             //  Calls
-            AstNode::FunCall { name, args, named, loc } => {
+            AstNode::FunCall {
+                name,
+                args,
+                named,
+                loc,
+            } => {
                 // Optimise `range |> step(n)` — emit Range with step directly.
-                if name == "step" && args.len() == 2
+                if name == "step"
+                    && args.len() == 2
                     && let AstNode::Range {
                         start,
                         end,
                         step: _existing_step,
                         ..
                     } = &args[0]
-                    {
-                        let start_r = self.compile_node(start)?;
-                        let end_r = self.compile_node(end)?;
-                        let step_r = self.compile_node(&args[1])?;
-                        let dst = self.alloc_reg();
-                        self.emit(Instruction::Range {
-                            dst,
-                            start: start_r,
-                            end: end_r,
-                            step: Some(step_r),
-                            loc: *loc,
-                        });
-                        self.free_reg(start_r);
-                        self.free_reg(end_r);
-                        self.free_reg(step_r);
-                        return Ok(dst);
-                    }
-                expr::compile_fun_call(self, name, args, &named, *loc)
+                {
+                    let start_r = self.compile_node(start)?;
+                    let end_r = self.compile_node(end)?;
+                    let step_r = self.compile_node(&args[1])?;
+                    let dst = self.alloc_reg();
+                    self.emit(Instruction::Range {
+                        dst,
+                        start: start_r,
+                        end: end_r,
+                        step: Some(step_r),
+                        loc: *loc,
+                    });
+                    self.free_reg(start_r);
+                    self.free_reg(end_r);
+                    self.free_reg(step_r);
+                    return Ok(dst);
+                }
+                expr::compile_fun_call(self, name, args, named, *loc)
             }
-            AstNode::DynamicCall { callee, args, named: _, loc } => {
+            AstNode::DynamicCall {
+                callee,
+                args,
+                named: _,
+                loc,
+            } => {
                 let callee_r = self.compile_node(callee)?;
                 let args_r = expr::compile_args(self, args)?;
                 let dst = self.alloc_reg();
@@ -600,14 +621,22 @@ impl Codegen {
             //  Decorators — compile the inner function, then call the decorator.
             //  The decorator receives the function NAME (pool string) as its
             //  first argument, plus any additional decorator args.
-            AstNode::Decorator { name: dec_name, args, named: _, inner, loc } => {
+            AstNode::Decorator {
+                name: dec_name,
+                args,
+                named: _,
+                inner,
+                loc,
+            } => {
                 let fn_name = match inner.as_ref() {
                     AstNode::FunDecl { name, .. } => name.clone(),
                     AstNode::AsyncFun { name, .. } => name.clone(),
-                    _ => return Err(JitError::runtime(
-                        "Decorator target must be a function declaration",
-                        loc.as_error_pos(),
-                    )),
+                    _ => {
+                        return Err(JitError::runtime(
+                            "Decorator target must be a function declaration",
+                            loc.as_error_pos(),
+                        ));
+                    }
                 };
                 // Mark as decorated so external calls use dynamic dispatch
                 // (loading the decorator's result from the global variable).
@@ -630,7 +659,10 @@ impl Codegen {
                 //    closure first (so recursive calls work during the decorator).
                 let info = self.ensure_var(&fn_name);
                 if info.is_global {
-                    self.emit(Instruction::StoreGlobal { global: info.idx, src: fn_reg });
+                    self.emit(Instruction::StoreGlobal {
+                        global: info.idx,
+                        src: fn_reg,
+                    });
                 }
 
                 // 4. Compile decorator positional arguments
@@ -639,7 +671,9 @@ impl Codegen {
                     let r = self.compile_node(a)?;
                     arg_regs.push(r);
                 }
-                for &r in &arg_regs[1..] { self.free_reg(r); }
+                for &r in &arg_regs[1..] {
+                    self.free_reg(r);
+                }
                 self.free_reg(fn_reg);
 
                 // 5. Call the decorator
@@ -654,7 +688,10 @@ impl Codegen {
 
                 // 6. Overwrite with the decorator's result.
                 if info.is_global {
-                    self.emit(Instruction::StoreGlobal { global: info.idx, src: dst_reg });
+                    self.emit(Instruction::StoreGlobal {
+                        global: info.idx,
+                        src: dst_reg,
+                    });
                 }
                 self.free_reg(dst_reg);
                 Ok(0)
@@ -717,7 +754,7 @@ impl Codegen {
                 let pn: Vec<String> = params.iter().map(|p| p.name.clone()).collect();
                 let dst = func::compile_closure(self, &pn, body, *loc)?;
                 Ok(dst)
-            },
+            }
 
             //  Collections
             AstNode::ListLit(elems, _) => {

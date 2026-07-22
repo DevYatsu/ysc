@@ -189,14 +189,10 @@ pub(super) fn compile_async_func(
 /// is a local (→ capture) or a global (→ skip, accessible via `LoadGlobal`).
 fn find_captures(body: &AstNode, closure_params: &[String], parent: &Codegen) -> Vec<String> {
     let mut found: Vec<String> = Vec::new();
-    let bound: Vec<String> = closure_params.iter().cloned().collect();
+    let bound: Vec<String> = closure_params.to_vec();
     walk_for_free_vars(body, &bound, &mut found);
     // Filter: keep only names that are LOCALS in the parent scope.
-    found.retain(|name| {
-        parent
-            .get_var(name)
-            .is_some_and(|v| !v.is_global)
-    });
+    found.retain(|name| parent.get_var(name).is_some_and(|v| !v.is_global));
     found
 }
 
@@ -208,7 +204,9 @@ fn walk_for_free_vars(node: &AstNode, bound: &[String], found: &mut Vec<String>)
                 found.push(name.clone());
             }
         }
-        AstNode::FunCall { name, args, named, .. } => {
+        AstNode::FunCall {
+            name, args, named, ..
+        } => {
             // The function name might be a captured variable (e.g. `fn(x)`).
             if !bound.contains(name) && !found.contains(name) {
                 found.push(name.clone());
@@ -216,22 +214,29 @@ fn walk_for_free_vars(node: &AstNode, bound: &[String], found: &mut Vec<String>)
             for a in args {
                 walk_for_free_vars(a, bound, found);
             }
-            for (_n, v) in named {
+            for v in named.values() {
                 walk_for_free_vars(v, bound, found);
             }
         }
-        AstNode::DynamicCall { callee, args, named, .. } => {
+        AstNode::DynamicCall {
+            callee,
+            args,
+            named,
+            ..
+        } => {
             walk_for_free_vars(callee, bound, found);
             for a in args {
                 walk_for_free_vars(a, bound, found);
             }
-            for (_n, v) in named {
+            for v in named.values() {
                 walk_for_free_vars(v, bound, found);
             }
         }
 
         // -- Variable-binding constructs (add to bound set then recurse) -----
-        AstNode::For { var, iter, body, .. } => {
+        AstNode::For {
+            var, iter, body, ..
+        } => {
             walk_for_free_vars(iter, bound, found);
             let mut b = bound.to_vec();
             b.push(var.clone());
@@ -239,7 +244,9 @@ fn walk_for_free_vars(node: &AstNode, bound: &[String], found: &mut Vec<String>)
                 walk_for_free_vars(stmt, &b, found);
             }
         }
-        AstNode::FunDecl { name, params, body, .. } => {
+        AstNode::FunDecl {
+            name, params, body, ..
+        } => {
             let mut b = bound.to_vec();
             b.push(name.clone());
             for p in params {
@@ -289,7 +296,9 @@ fn walk_for_free_vars(node: &AstNode, bound: &[String], found: &mut Vec<String>)
         AstNode::Yield(expr, _) => walk_for_free_vars(expr, bound, found),
         AstNode::Await(expr, _) => walk_for_free_vars(expr, bound, found),
         AstNode::Splat(expr, _) => walk_for_free_vars(expr, bound, found),
-        AstNode::Range { start, end, step, .. } => {
+        AstNode::Range {
+            start, end, step, ..
+        } => {
             walk_for_free_vars(start, bound, found);
             walk_for_free_vars(end, bound, found);
             if let Some(s) = step {
@@ -310,7 +319,12 @@ fn walk_for_free_vars(node: &AstNode, bound: &[String], found: &mut Vec<String>)
                 walk_for_free_vars(v, bound, found);
             }
         }
-        AstNode::If { cond, then_block, else_block, .. } => {
+        AstNode::If {
+            cond,
+            then_block,
+            else_block,
+            ..
+        } => {
             walk_for_free_vars(cond, bound, found);
             for stmt in then_block {
                 walk_for_free_vars(stmt, bound, found);
@@ -353,7 +367,12 @@ fn walk_for_free_vars(node: &AstNode, bound: &[String], found: &mut Vec<String>)
                 walk_for_free_vars(stmt, bound, found);
             }
         }
-        AstNode::Decorator { name: _, args, inner, .. } => {
+        AstNode::Decorator {
+            name: _,
+            args,
+            inner,
+            ..
+        } => {
             for a in args {
                 walk_for_free_vars(a, bound, found);
             }
@@ -361,10 +380,17 @@ fn walk_for_free_vars(node: &AstNode, bound: &[String], found: &mut Vec<String>)
         }
 
         // -- Literals and other leaf nodes (no variable references) ----------
-        AstNode::Number(..) | AstNode::Bool(..) | AstNode::Nil(..) | AstNode::Str(..)
-        | AstNode::Break(..) | AstNode::Fail { .. }
-        | AstNode::ErrorDecl { .. } | AstNode::ErrorEnum { .. } | AstNode::Use { .. }
-        | AstNode::AsyncFun { .. } | AstNode::Template { .. } => {}
+        AstNode::Number(..)
+        | AstNode::Bool(..)
+        | AstNode::Nil(..)
+        | AstNode::Str(..)
+        | AstNode::Break(..)
+        | AstNode::Fail { .. }
+        | AstNode::ErrorDecl { .. }
+        | AstNode::ErrorEnum { .. }
+        | AstNode::Use { .. }
+        | AstNode::AsyncFun { .. }
+        | AstNode::Template { .. } => {}
     }
 }
 
@@ -389,7 +415,10 @@ pub(super) fn compile_closure(
     for (i, name) in capture_names.iter().enumerate() {
         func.locals.insert(
             name.clone(),
-            VarInfo { idx: i, is_global: false },
+            VarInfo {
+                idx: i,
+                is_global: false,
+            },
         );
         func.var_mask |= 1 << i;
         func.next_reg = i + 1;

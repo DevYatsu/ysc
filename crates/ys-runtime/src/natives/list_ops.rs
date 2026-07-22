@@ -107,11 +107,7 @@ fn native_map(ctx: &NativeCtx, args: &[Value]) -> Result<Value, JitError> {
     let closure = args.get(1).copied().unwrap_or(Value::nil());
     let mut out = Vec::with_capacity(elems.len());
     for v in elems {
-        out.push(ctx.call_closure(
-            closure,
-            &[v],
-            Loc { line: 0, col: 0 },
-        )?);
+        out.push(ctx.call_closure(closure, &[v], Loc { line: 0, col: 0 })?);
     }
     Ok(ctx.alloc(ManagedObject::List(out)))
 }
@@ -121,7 +117,10 @@ fn native_filter(ctx: &NativeCtx, args: &[Value]) -> Result<Value, JitError> {
     let closure = args.get(1).copied().unwrap_or(Value::nil());
     let mut out = Vec::new();
     for v in elems {
-        if ctx.call_closure( closure, &[v], Loc { line: 0, col: 0 })?.is_truthy() {
+        if ctx
+            .call_closure(closure, &[v], Loc { line: 0, col: 0 })?
+            .is_truthy()
+        {
             out.push(v);
         }
     }
@@ -134,7 +133,7 @@ fn native_reduce(ctx: &NativeCtx, args: &[Value]) -> Result<Value, JitError> {
     let closure = args.get(2).copied().unwrap_or(Value::nil());
     let mut acc = initial;
     for v in elems {
-        acc = ctx.call_closure( closure, &[acc, v], Loc { line: 0, col: 0 })?;
+        acc = ctx.call_closure(closure, &[acc, v], Loc { line: 0, col: 0 })?;
     }
     Ok(acc)
 }
@@ -143,7 +142,7 @@ fn native_each(ctx: &NativeCtx, args: &[Value]) -> Result<Value, JitError> {
     let elems = get_list(args, "each", ctx)?;
     let closure = args.get(1).copied().unwrap_or(Value::nil());
     for v in elems {
-        ctx.call_closure( closure, &[v], Loc { line: 0, col: 0 })?;
+        ctx.call_closure(closure, &[v], Loc { line: 0, col: 0 })?;
     }
     Ok(args.first().copied().unwrap_or(Value::nil()))
 }
@@ -152,7 +151,10 @@ fn native_find(ctx: &NativeCtx, args: &[Value]) -> Result<Value, JitError> {
     let elems = get_list(args, "find", ctx)?;
     let closure = args.get(1).copied().unwrap_or(Value::nil());
     for v in elems {
-        if ctx.call_closure( closure, &[v], Loc { line: 0, col: 0 })?.is_truthy() {
+        if ctx
+            .call_closure(closure, &[v], Loc { line: 0, col: 0 })?
+            .is_truthy()
+        {
             return Ok(v);
         }
     }
@@ -163,7 +165,10 @@ fn native_some(ctx: &NativeCtx, args: &[Value]) -> Result<Value, JitError> {
     let elems = get_list(args, "some", ctx)?;
     let closure = args.get(1).copied().unwrap_or(Value::nil());
     for v in elems {
-        if ctx.call_closure( closure, &[v], Loc { line: 0, col: 0 })?.is_truthy() {
+        if ctx
+            .call_closure(closure, &[v], Loc { line: 0, col: 0 })?
+            .is_truthy()
+        {
             return Ok(Value::bool(true));
         }
     }
@@ -174,7 +179,10 @@ fn native_every(ctx: &NativeCtx, args: &[Value]) -> Result<Value, JitError> {
     let elems = get_list(args, "every", ctx)?;
     let closure = args.get(1).copied().unwrap_or(Value::nil());
     for v in elems {
-        if !ctx.call_closure( closure, &[v], Loc { line: 0, col: 0 })?.is_truthy() {
+        if !ctx
+            .call_closure(closure, &[v], Loc { line: 0, col: 0 })?
+            .is_truthy()
+        {
             return Ok(Value::bool(false));
         }
     }
@@ -303,7 +311,7 @@ fn native_flat_map(ctx: &NativeCtx, args: &[Value]) -> Result<Value, JitError> {
     let closure = args.get(1).copied().unwrap_or(Value::nil());
     let mut out = Vec::new();
     for v in elems {
-        let mapped = ctx.call_closure( closure, &[v], Loc { line: 0, col: 0 })?;
+        let mapped = ctx.call_closure(closure, &[v], Loc { line: 0, col: 0 })?;
         if let Some(oid) = mapped.as_obj_id() {
             let objects = ctx.heap_objects();
             if let Some(ManagedObject::List(inner)) = objects
@@ -361,12 +369,11 @@ fn native_push(ctx: &NativeCtx, args: &[Value]) -> Result<Value, JitError> {
         .as_obj_id()
         .ok_or_else(|| JitError::runtime("push: expected a list", (0, 0)))?;
     let objects = ctx.as_inner().heap.objects.get_mut();
-    if let Some(Some(obj)) = objects.get_mut(oid as usize) {
-        if let ManagedObject::List(elems) = &mut obj.obj {
+    if let Some(Some(obj)) = objects.get_mut(oid as usize)
+        && let ManagedObject::List(elems) = &mut obj.obj {
             elems.push(elem);
             return Ok(list_val);
         }
-    }
     Err(JitError::runtime("push: expected a list", (0, 0)))
 }
 

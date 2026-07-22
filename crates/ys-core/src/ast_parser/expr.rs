@@ -1,10 +1,10 @@
 use super::AstParser;
 use crate::ast::*;
-use rustc_hash::FxHashMap;
 use crate::compiler::Loc;
 use crate::error::JitError;
 use crate::lexer::Token;
 use crate::unescape::unescape_string;
+use rustc_hash::FxHashMap;
 
 // ---------------------------------------------------------------------------
 // Fallthrough (or / except) — lowest precedence
@@ -31,7 +31,12 @@ pub(super) fn parse_fallthrough_expr<'source>(
                 loc,
             } => {
                 args.insert(0, lhs);
-                lhs = AstNode::FunCall { name, args, named: rustc_hash::FxHashMap::default(), loc };
+                lhs = AstNode::FunCall {
+                    name,
+                    args,
+                    named: rustc_hash::FxHashMap::default(),
+                    loc,
+                };
             }
             _ => {
                 return Err(JitError::parsing(
@@ -376,9 +381,19 @@ pub(super) fn parse_postfix_expr<'source>(
                 parser.advance()?;
                 let (args, named) = parse_call_args(parser)?;
                 if let AstNode::Ident(name, _) = &left {
-                    left = AstNode::FunCall { name: name.clone(), args, named, loc };
+                    left = AstNode::FunCall {
+                        name: name.clone(),
+                        args,
+                        named,
+                        loc,
+                    };
                 } else {
-                    left = AstNode::DynamicCall { callee: Box::new(left), args, named, loc };
+                    left = AstNode::DynamicCall {
+                        callee: Box::new(left),
+                        args,
+                        named,
+                        loc,
+                    };
                 }
             }
             // obj[index]
@@ -598,7 +613,10 @@ pub(super) fn parse_call_args<'source>(
             // treat it as a named argument.
             let expr = parser.parse_expression()?;
             if matches!(&expr, AstNode::Ident(..)) && parser.peek() == Some(Token::Colon) {
-                let name = match &expr { AstNode::Ident(n, _) => n.clone(), _ => unreachable!() };
+                let name = match &expr {
+                    AstNode::Ident(n, _) => n.clone(),
+                    _ => unreachable!(),
+                };
                 parser.advance()?; // consume `:`
                 let value = parser.parse_expression()?;
                 named.insert(name, value);
@@ -630,7 +648,12 @@ pub(super) fn parse_pipe_rhs<'source>(
     let name = parser.expect_ident()?.to_string();
     parser.expect(Token::LParen)?;
     let (args, named) = parse_call_args(parser)?;
-    Ok(AstNode::FunCall { name, args, named, loc })
+    Ok(AstNode::FunCall {
+        name,
+        args,
+        named,
+        loc,
+    })
 }
 
 // ---------------------------------------------------------------------------

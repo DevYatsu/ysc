@@ -33,27 +33,31 @@ pub(super) fn compile_assign(
             } = value
             {
                 if let (AstNode::Ident(lname, _), AstNode::Number(n, _)) = (&**lhs, &**rhs)
-                    && lname == name && *n == 1.0 {
-                        let info = cg.ensure_var(name);
-                        cg.instructions.pop();
-                        if info.is_global {
-                            cg.emit(Instruction::IncrementGlobal(info.idx));
-                        } else {
-                            cg.emit(Instruction::Increment(info.idx));
-                        }
-                        return Ok(info.idx);
+                    && lname == name
+                    && *n == 1.0
+                {
+                    let info = cg.ensure_var(name);
+                    cg.instructions.pop();
+                    if info.is_global {
+                        cg.emit(Instruction::IncrementGlobal(info.idx));
+                    } else {
+                        cg.emit(Instruction::Increment(info.idx));
                     }
+                    return Ok(info.idx);
+                }
                 if let (AstNode::Number(n, _), AstNode::Ident(rname, _)) = (&**lhs, &**rhs)
-                    && rname == name && *n == 1.0 {
-                        let info = cg.ensure_var(name);
-                        cg.instructions.pop();
-                        if info.is_global {
-                            cg.emit(Instruction::IncrementGlobal(info.idx));
-                        } else {
-                            cg.emit(Instruction::Increment(info.idx));
-                        }
-                        return Ok(info.idx);
+                    && rname == name
+                    && *n == 1.0
+                {
+                    let info = cg.ensure_var(name);
+                    cg.instructions.pop();
+                    if info.is_global {
+                        cg.emit(Instruction::IncrementGlobal(info.idx));
+                    } else {
+                        cg.emit(Instruction::Increment(info.idx));
                     }
+                    return Ok(info.idx);
+                }
             }
             // Check for decrement pattern: x = x - 1
             if let AstNode::Binary {
@@ -63,16 +67,18 @@ pub(super) fn compile_assign(
                 ..
             } = value
                 && let (AstNode::Ident(lname, _), AstNode::Number(n, _)) = (&**lhs, &**rhs)
-                    && lname == name && *n == 1.0 {
-                        let info = cg.ensure_var(name);
-                        cg.instructions.pop();
-                        if info.is_global {
-                            cg.emit(Instruction::DecrementGlobal(info.idx));
-                        } else {
-                            cg.emit(Instruction::Decrement(info.idx));
-                        }
-                        return Ok(info.idx);
-                    }
+                && lname == name
+                && *n == 1.0
+            {
+                let info = cg.ensure_var(name);
+                cg.instructions.pop();
+                if info.is_global {
+                    cg.emit(Instruction::DecrementGlobal(info.idx));
+                } else {
+                    cg.emit(Instruction::Decrement(info.idx));
+                }
+                return Ok(info.idx);
+            }
             let info = cg.ensure_var(name);
             if info.is_global {
                 cg.emit(Instruction::StoreGlobal {

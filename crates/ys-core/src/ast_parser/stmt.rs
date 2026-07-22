@@ -43,9 +43,10 @@ pub(super) fn is_assignment_start<'source>(parser: &AstParser<'source>) -> bool 
                 p += 1;
                 // skip the type name
                 if let Some(td2) = tokens.get(p)
-                    && matches!(td2.token, Token::Identifier(_)) {
-                        p += 1;
-                    }
+                    && matches!(td2.token, Token::Identifier(_))
+                {
+                    p += 1;
+                }
             }
             Token::LBracket => {
                 // skip to matching ]

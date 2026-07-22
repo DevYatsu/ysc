@@ -91,7 +91,8 @@ impl<'source> TokenStream<'source> {
         } else {
             let loc = self.loc();
             let msg = if loc.line > 0 {
-                "Unexpected EOF — reached end of file with unclosed blocks or expressions".to_string()
+                "Unexpected EOF — reached end of file with unclosed blocks or expressions"
+                    .to_string()
             } else {
                 "Unexpected EOF — empty source or all tokens skipped".to_string()
             };

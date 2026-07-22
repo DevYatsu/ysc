@@ -82,9 +82,7 @@ pub(crate) fn register(reg: &mut NativeRegistry) {
             .and_then(|v| ctx.value_as_string(*v))
             .map(Cow::into_owned)
             .unwrap_or_default();
-        let found = ctx
-            .pool_id(&key)
-            .is_some_and(|id| fields.contains_key(&id));
+        let found = ctx.pool_id(&key).is_some_and(|id| fields.contains_key(&id));
         Ok(Value::bool(found))
     });
 }

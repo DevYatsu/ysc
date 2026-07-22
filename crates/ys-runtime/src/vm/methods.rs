@@ -567,8 +567,7 @@ fn dispatch_object_method(
                 let objects = ctx.heap.objects.get();
                 if let Some(Some(obj)) = objects.get(obj_oid as usize) {
                     if let ManagedObject::Object(ref d) = obj.obj {
-                        ctx.pool_id(&key)
-                            .is_some_and(|id| d.map.contains_key(&id))
+                        ctx.pool_id(&key).is_some_and(|id| d.map.contains_key(&id))
                     } else {
                         false
                     }
