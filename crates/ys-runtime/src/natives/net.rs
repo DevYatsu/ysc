@@ -30,6 +30,7 @@ pub(crate) fn register(reg: &mut NativeRegistry) {
 }
 
 /// Wrap a value in a resolved Promise on the heap.
+#[cfg(not(target_arch = "wasm32"))]
 fn resolved_promise(ctx: &Context, val: Value) -> Value {
     ctx.alloc(ManagedObject::Promise(PromiseState::Resolved(val)))
 }

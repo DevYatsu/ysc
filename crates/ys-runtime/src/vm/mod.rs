@@ -31,9 +31,11 @@ pub(crate) use collections::{
     GetResult, handle_list_get, handle_list_set, handle_object_get, handle_object_set,
 };
 pub(crate) use dispatch::{
-    apply_rest, build_call_registers, build_closure_registers, dispatch_callable,
+    build_call_registers, build_closure_registers, dispatch_callable,
     make_registers, pool_regs, set_call_loc,
 };
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use dispatch::apply_rest;
 #[cfg(target_arch = "wasm32")]
 pub(crate) use dispatch::get_call_loc;
 pub(crate) use frame::{
