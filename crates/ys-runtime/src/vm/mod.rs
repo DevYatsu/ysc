@@ -1094,19 +1094,6 @@ pub fn execute_bytecode(
                 {
                     let callables = ctx.callables.get();
                     if let Some(Some(Callable::User(f))) = callables.get(name_id as usize) {
-                        // Store call location for native function annotations.
-                        set_call_loc(loc.line, loc.col);
-
-                        if box_data.args_regs.len() != f.params_count {
-                            return Err(JitError::runtime(
-                                format!(
-                                    "Function arity mismatch: expected {}, got {}",
-                                    f.params_count,
-                                    box_data.args_regs.len()
-                                ),
-                                loc.as_error_pos(),
-                            ));
-                        }
                         let ret = dst.map(|d| ReturnTarget { dst: d });
                         let callee_regs = build_call_registers(
                             f.locals_count,
