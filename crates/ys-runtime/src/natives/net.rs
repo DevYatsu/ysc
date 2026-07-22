@@ -5,9 +5,10 @@
 
 use crate::context::{Context, NativeCtx};
 use crate::heap::ManagedObject;
-use crate::natives::NativeRegistry;
+use crate::natives::{NativeRegistry, alloc_string};
 use crate::vm::PromiseState;
 use std::borrow::Cow;
+#[cfg(not(target_arch = "wasm32"))]
 use std::sync::Arc;
 use ys_core::compiler::Value;
 use ys_core::error::JitError;

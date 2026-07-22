@@ -22,7 +22,7 @@ pub(crate) fn register(reg: &mut NativeRegistry) {
         Ok(ctx.alloc(ManagedObject::Timestamp(std::time::Instant::now())))
     });
 
-    reg.insert("sleep", |ctx, args| {
+    reg.insert("sleep", |_ctx, args| {
         let [val] = args else {
             return Err(JitError::runtime("sleep() expects 1 argument", (0, 0)));
         };
