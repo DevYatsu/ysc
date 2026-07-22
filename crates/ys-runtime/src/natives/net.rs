@@ -1,22 +1,31 @@
 //! Network built-ins: `fetch`, `serve`, `spawn`.
 //!
-//! Uses `ureq` for blocking HTTP requests and `std::net` for TCP.
+//! Uses `ureq` for blocking HTTP requests and `std::net` for TCP on native.
+//! On wasm32, uses `web-sys::XmlHttpRequest` to call the browser's fetch API.
 
-use crate::context::{Completion, Context, NativeCtx, SpawnedTask};
+use crate::context::{Context, NativeCtx};
 use crate::heap::ManagedObject;
-use crate::natives::NativeRegistry;
+use crate::natives::{NativeRegistry, alloc_string};
 use crate::vm::PromiseState;
 use std::borrow::Cow;
-use std::io::{Read, Write};
-use std::net::TcpListener;
 use std::sync::Arc;
 use ys_core::compiler::Value;
 use ys_core::error::JitError;
 
+#[cfg(not(target_arch = "wasm32"))]
+use crate::context::{Completion, SpawnedTask};
+#[cfg(not(target_arch = "wasm32"))]
+use std::io::{Read, Write};
+#[cfg(not(target_arch = "wasm32"))]
+use std::net::TcpListener;
+
 pub(crate) fn register(reg: &mut NativeRegistry) {
     reg.insert("fetch", native_fetch);
-    reg.insert("serve", native_serve);
-    reg.insert("spawn", native_spawn);
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        reg.insert("serve", native_serve);
+        reg.insert("spawn", native_spawn);
+    }
 }
 
 /// Wrap a value in a resolved Promise on the heap.
@@ -24,6 +33,45 @@ fn resolved_promise(ctx: &Context, val: Value) -> Value {
     ctx.alloc(ManagedObject::Promise(PromiseState::Resolved(val)))
 }
 
+/// Native fetch implementation for wasm32 using the browser's `XMLHttpRequest`.
+#[cfg(target_arch = "wasm32")]
+fn native_fetch(ctx: &NativeCtx, args: &[Value]) -> Result<Value, JitError> {
+    let url = args
+        .first()
+        .and_then(|v| ctx.value_as_string(*v).map(Cow::into_owned))
+        .ok_or_else(|| {
+            JitError::runtime(
+                "fetch(url) requires a string URL as the first argument",
+                (0, 0),
+            )
+        })?;
+
+    let xhr = web_sys::XmlHttpRequest::new().map_err(|_| {
+        JitError::runtime("fetch: failed to create XMLHttpRequest", (0, 0))
+    })?;
+
+    // Open a synchronous request (blocks until complete).
+    xhr.open_with_async("GET", &url, false).map_err(|_| {
+        JitError::runtime("fetch: failed to open request", (0, 0))
+    })?;
+
+    xhr.send().map_err(|_| {
+        JitError::runtime("fetch: failed to send request", (0, 0))
+    })?;
+
+    let _status = xhr.status();
+    let text = match xhr.response_text() {
+        Ok(Some(t)) => t,
+        _ => String::new(),
+    };
+
+    let body = alloc_string(ctx.as_inner(), text);
+    let promise = ctx.alloc(ManagedObject::Promise(PromiseState::Resolved(body)));
+    Ok(promise)
+}
+
+/// Native fetch implementation for non-wasm32 using `ureq` + threading.
+#[cfg(not(target_arch = "wasm32"))]
 fn native_fetch(ctx: &NativeCtx, args: &[Value]) -> Result<Value, JitError> {
     let url = args
         .first()
@@ -67,6 +115,7 @@ fn native_fetch(ctx: &NativeCtx, args: &[Value]) -> Result<Value, JitError> {
     Ok(promise)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn native_serve(ctx: &NativeCtx, args: &[Value]) -> Result<Value, JitError> {
     let (port_val, handler_val) = match args {
         [p, h] => (*p, *h),
@@ -153,6 +202,7 @@ fn native_serve(ctx: &NativeCtx, args: &[Value]) -> Result<Value, JitError> {
     Ok(resolved_promise(ctx.as_inner(), val))
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn native_spawn(ctx: &NativeCtx, args: &[Value]) -> Result<Value, JitError> {
     if args.is_empty() {
         return Err(JitError::runtime(

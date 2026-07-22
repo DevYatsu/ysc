@@ -6,7 +6,7 @@
 pub mod collections;
 pub mod io;
 pub mod list_ops;
-#[cfg(feature = "networking")]
+#[cfg(any(feature = "networking", target_arch = "wasm32"))]
 pub mod net;
 pub mod number_ops;
 pub mod object_ops;
@@ -85,7 +85,7 @@ pub fn register(fns: &mut FxHashMap<String, NativeFn>) {
     object_ops::register(&mut reg);
     string_ops::register(&mut reg);
     time::register(&mut reg);
-    #[cfg(feature = "networking")]
+    #[cfg(any(feature = "networking", target_arch = "wasm32"))]
     net::register(&mut reg);
     *fns = reg.into_map();
 }

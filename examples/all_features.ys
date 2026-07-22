@@ -1,0 +1,67 @@
+// ═══════════════════════════════════════════════════════════════
+// YatsuScript — All New Features Test
+// ═══════════════════════════════════════════════════════════════
+
+print("=== 1. Named Arguments ===")
+fun greet(name, greeting) {
+  ret greeting + ", " + name + "!"
+}
+
+print(greet("World", "Hello"))
+print(greet("World", greeting: "Hi"))
+
+print("=== 2. Default Arguments ===")
+fun hello(name, greeting: "Hello") {
+  ret greeting + ", " + name + "!"
+}
+
+print(hello("World"))
+print(hello("World", greeting: "Hi"))
+
+print("=== 3. Mixed: positional + named + default ===")
+fun format(msg, prefix: "", suffix: "") {
+  ret prefix + msg + suffix
+}
+
+print(format("test"))
+print(format("test", prefix: "["))
+print(format("test", suffix: "]"))
+print(format("test", prefix: "<", suffix: ">"))
+
+print("=== 4. Decorator ===")
+fun dummy(fn) {
+  ret |x| x * 2
+}
+
+@dummy
+fun double_it(x) {
+  ret x
+}
+
+print("double_it(21) = " + str(double_it(21)))
+
+print("=== 5. Two separate decorated functions ===")
+fun wrapper(fn) {
+  ret |x| x + 1
+}
+
+@wrapper
+fun inc(x) {
+  ret x
+}
+
+@wrapper
+fun also_inc(x) {
+  ret x
+}
+
+print("inc(5) = " + str(inc(5)))
+print("also_inc(10) = " + str(also_inc(10)))
+
+print("=== 6. Normal function still works ===")
+fun add(a, b) {
+  ret a + b
+}
+print("add(3, 4) = " + str(add(3, 4)))
+
+print("=== All tests passed! ===")

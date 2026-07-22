@@ -73,6 +73,8 @@ pub(crate) fn register(reg: &mut NativeRegistry) {
     reg.insert("drop", native_drop);
     reg.insert("step", native_step);
     reg.insert("unique", native_unique);
+    reg.insert("len", native_len);
+    reg.insert("push", native_push);
 }
 
 fn native_step(ctx: &NativeCtx, args: &[Value]) -> Result<Value, JitError> {
@@ -336,6 +338,36 @@ fn native_drop(ctx: &NativeCtx, args: &[Value]) -> Result<Value, JitError> {
         .map(|n| n.max(0.0) as usize)
         .unwrap_or(0);
     Ok(ctx.alloc(ManagedObject::List(elems[n.min(elems.len())..].to_vec())))
+}
+
+fn native_len(ctx: &NativeCtx, args: &[Value]) -> Result<Value, JitError> {
+    let val = args.first().copied().unwrap_or(Value::nil());
+    let oid = val
+        .as_obj_id()
+        .ok_or_else(|| JitError::runtime("len: expected a list or object", (0, 0)))?;
+    let objects = ctx.heap_objects();
+    let o = objects.get(oid as usize).and_then(|o| o.as_ref());
+    match o.map(|o| &o.obj) {
+        Some(ManagedObject::List(elems)) => Ok(Value::number(elems.len() as f64)),
+        Some(ManagedObject::Object(d)) => Ok(Value::number(d.map.len() as f64)),
+        _ => Err(JitError::runtime("len: expected a list or object", (0, 0))),
+    }
+}
+
+fn native_push(ctx: &NativeCtx, args: &[Value]) -> Result<Value, JitError> {
+    let list_val = args.first().copied().unwrap_or(Value::nil());
+    let elem = args.get(1).copied().unwrap_or(Value::nil());
+    let oid = list_val
+        .as_obj_id()
+        .ok_or_else(|| JitError::runtime("push: expected a list", (0, 0)))?;
+    let objects = ctx.as_inner().heap.objects.get_mut();
+    if let Some(Some(obj)) = objects.get_mut(oid as usize) {
+        if let ManagedObject::List(elems) = &mut obj.obj {
+            elems.push(elem);
+            return Ok(list_val);
+        }
+    }
+    Err(JitError::runtime("push: expected a list", (0, 0)))
 }
 
 fn native_unique(ctx: &NativeCtx, args: &[Value]) -> Result<Value, JitError> {

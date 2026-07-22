@@ -31,8 +31,8 @@ pub(crate) use collections::{
     GetResult, handle_list_get, handle_list_set, handle_object_get, handle_object_set,
 };
 pub(crate) use dispatch::{
-    build_call_registers, build_closure_registers, dispatch_callable, make_registers, pool_regs,
-    set_call_loc,
+    apply_rest, build_call_registers, build_closure_registers, dispatch_callable, get_call_loc,
+    make_registers, pool_regs, set_call_loc,
 };
 pub(crate) use frame::{
     CallFrame, FrameState, InstrPtr, ReturnTarget, scan_current_frames, set_current_frames,
@@ -172,7 +172,7 @@ pub fn execute_bytecode(
             registers,
             pc: start_pc,
             return_to: None,
-            obj_cache: Vec::with_capacity(4),
+            obj_cache: Vec::new(),
         });
         set_current_frames(&frames);
 
@@ -222,6 +222,28 @@ pub fn execute_bytecode(
                 fr.advance();
                 continue;
             }
+            Instruction::LoadLiteral { dst, val, .. } => {
+                unsafe { frames.get_unchecked_mut(fi) }.set_reg(*dst, *val);
+                frames[fi].advance();
+                continue;
+            }
+            Instruction::Move { dst, src } => {
+                let fr = unsafe { frames.get_unchecked_mut(fi) };
+                fr.set_reg(*dst, fr.reg(*src));
+                fr.advance();
+                continue;
+            }
+            Instruction::Return { value: val_reg, .. } => {
+                let ret = val_reg.map_or(Value::nil(), |r| frames[fi][r]);
+                let frame = frames.pop().unwrap();
+                pool_regs(frame.registers);
+                if let Some(t) = frame.return_to {
+                    let ci = frames.len() - 1;
+                    frames[ci].registers[t.dst] = ret;
+                    continue;
+                }
+                return Ok(ret);
+            }
             Instruction::Jump(target) => { frames[fi].jump_to(*target); continue; }
             Instruction::JumpIfNotLess { var, end, target } => {
                 let fr = unsafe { frames.get_unchecked_mut(fi) };
@@ -236,17 +258,11 @@ pub fn execute_bytecode(
 
         match instr {
             //  Memory
-            Instruction::LoadLiteral { dst, val, .. } => {
-                let fr = unsafe { frames.get_unchecked_mut(fi) };
-                fr[*dst] = *val;
-                fr.advance();
+            Instruction::LoadLiteral { .. } => {
+                // Handled in hot-path peel above
             }
-            Instruction::Move { dst, src } => {
-                let fr = unsafe { frames.get_unchecked_mut(fi) };
-                let d = *dst;
-                let v = fr[*src];
-                fr[d] = v;
-                fr.advance();
+            Instruction::Move { .. } => {
+                // Handled in hot-path peel above
             }
             Instruction::LoadGlobal { dst, global } => {
                 let fr = unsafe { frames.get_unchecked_mut(fi) };
@@ -260,20 +276,8 @@ pub fn execute_bytecode(
             }
 
             //  Control flow
-            Instruction::Jump(target) => {
-                frames[fi].jump_to(*target);
-                continue;
-            }
-            Instruction::JumpIfNotLess { var, end, target } => {
-                let fr = unsafe { frames.get_unchecked_mut(fi) };
-                let v = fr[*var];
-                let e = fr[*end];
-                if let (Some(vn), Some(en)) = (v.as_number(), e.as_number())
-                    && vn >= en {
-                        fr.jump_to(*target);
-                        continue;
-                    }
-                fr.advance();
+            Instruction::Jump(..) | Instruction::JumpIfNotLess { .. } => {
+                // Handled in hot-path peel above
             }
             Instruction::JumpIfFalse { cond, target } => {
                 let fr = unsafe { frames.get_unchecked_mut(fi) };
@@ -294,17 +298,8 @@ pub fn execute_bytecode(
                 }
                 continue;
             }
-            Instruction::Return { value: val_reg, .. } => {
-                let ret = val_reg.map_or(Value::nil(), |r| frames[fi][r]);
-                let frame = frames.pop().unwrap();
-                pool_regs(frame.registers);
-                if let Some(t) = frame.return_to {
-                    // After the pop, fi is stale. Recompute caller index.
-                    let ci = frames.len() - 1;
-                    frames[ci].registers[t.dst] = ret;
-                    continue;
-                }
-                return Ok(ret);
+            Instruction::Return { .. } => {
+                // Handled in hot-path peel above
             }
 
             Instruction::Yield {
@@ -1026,13 +1021,13 @@ pub fn execute_bytecode(
                 let fr = unsafe { frames.get_unchecked_mut(fi) };
                 let mut vals = Vec::with_capacity(captures.len());
                 for &reg in captures.iter() {
-                    vals.push(fr[reg]);
+                    vals.push(fr.registers[reg]);
                 }
                 let cl = crate::heap::Closure {
                     name_id: *name_id,
                     captures: vals,
                 };
-                fr[*dst] = ctx.alloc(ManagedObject::Closure(cl));
+                fr.registers[*dst] = ctx.alloc(ManagedObject::Closure(cl));
                 fr.advance();
             }
 
@@ -1093,24 +1088,68 @@ pub fn execute_bytecode(
                 // reference-count increment/decrement per invocation.
                 {
                     let callables = ctx.callables.get();
-                    if let Some(Some(Callable::User(f))) = callables.get(name_id as usize) {
-                        let ret = dst.map(|d| ReturnTarget { dst: d });
-                        let callee_regs = build_call_registers(
-                            f.locals_count,
-                            &box_data.args_regs,
-                            &frames[fi].registers,
-                        );
-                        let instr_ptr = InstrPtr::from_arc(&f.instructions);
-                        frames.push(CallFrame {
-                            instructions: instr_ptr,
-                            func_name_id: Some(name_id),
-                            registers: callee_regs,
-                            pc: 0,
-                            return_to: ret,
-                            obj_cache: Vec::with_capacity(4),
-                        });
-                        frames[fi].pc += 1;
-                        continue;
+                    if let Some(Some(callable)) = callables.get(name_id as usize) {
+                        match callable {
+                            Callable::User(f) => {
+                                let min_args = f.rest_at.unwrap_or(f.params_count);
+                                if box_data.args_regs.len() < min_args
+                                    || (f.rest_at.is_none() && box_data.args_regs.len() != f.params_count)
+                                {
+                                    return Err(JitError::runtime(
+                                        format!(
+                                            "Function arity mismatch: expected {}, got {}",
+                                            f.params_count,
+                                            box_data.args_regs.len()
+                                        ),
+                                        loc.as_error_pos(),
+                                    ));
+                                }
+                                let ret = dst.map(|d| ReturnTarget { dst: d });
+                                let mut callee_regs = build_call_registers(
+                                    f.locals_count,
+                                    &box_data.args_regs,
+                                    &frames[fi].registers,
+                                );
+                                if let Some(rest_at) = f.rest_at {
+                                    dispatch::apply_rest(
+                                        ctx,
+                                        &mut callee_regs,
+                                        &box_data.args_regs,
+                                        &frames[fi].registers,
+                                        rest_at,
+                                    );
+                                }
+                                let instr_ptr = InstrPtr::from_arc(&f.instructions);
+                                frames.push(CallFrame {
+                                    instructions: instr_ptr,
+                                    func_name_id: Some(name_id),
+                                    registers: callee_regs,
+                                    pc: 0,
+                                    return_to: ret,
+                                    obj_cache: Vec::new(),
+                                });
+                                frames[fi].pc += 1;
+                                continue;
+                            }
+                            Callable::Native(nf) => {
+                                let res = if box_data.args_regs.len() <= 8 {
+                                    let mut buf = [Value::nil(); 8];
+                                    for (i, &r) in box_data.args_regs.iter().enumerate() {
+                                        buf[i] = frames[fi][r];
+                                    }
+                                    nf(&NativeCtx::new(ctx), &buf[..box_data.args_regs.len()])
+                                } else {
+                                    let args: Vec<Value> =
+                                        box_data.args_regs.iter().map(|&r| frames[fi][r]).collect();
+                                    nf(&NativeCtx::new(ctx), &args)
+                                }?;
+                                if let Some(d) = dst {
+                                    frames[fi][d] = res;
+                                }
+                                frames[fi].advance();
+                                continue;
+                            }
+                        }
                     }
                 }
 
@@ -1150,7 +1189,10 @@ pub fn execute_bytecode(
                         }
                     }
                     Callable::User(f) => {
-                        if box_data.args_regs.len() != f.params_count {
+                        let min_args = f.rest_at.unwrap_or(f.params_count);
+                        if box_data.args_regs.len() < min_args
+                            || (f.rest_at.is_none() && box_data.args_regs.len() != f.params_count)
+                        {
                             return Err(JitError::runtime(
                                 format!(
                                     "Function arity mismatch: expected {}, got {}",
@@ -1161,18 +1203,27 @@ pub fn execute_bytecode(
                             ));
                         }
                         let ret = dst.map(|d| ReturnTarget { dst: d });
-                        let callee_regs = build_call_registers(
+                        let mut callee_regs = build_call_registers(
                             f.locals_count,
                             &box_data.args_regs,
                             &frames[fi].registers,
                         );
+                        if let Some(rest_at) = f.rest_at {
+                            dispatch::apply_rest(
+                                ctx,
+                                &mut callee_regs,
+                                &box_data.args_regs,
+                                &frames[fi].registers,
+                                rest_at,
+                            );
+                        }
                         frames.push(CallFrame {
                             instructions: InstrPtr::from_arc(&f.instructions),
                             func_name_id: Some(name_id),
                             registers: callee_regs,
                             pc: 0,
                             return_to: ret,
-                            obj_cache: Vec::with_capacity(4),
+                            obj_cache: Vec::new(),
                         });
                     }
                 }
@@ -1214,7 +1265,6 @@ pub fn execute_bytecode(
                         && let ManagedObject::Closure(cl) = &o.obj
                     {
                         let args_regs = &*box_data.args_regs;
-                        let total_args = cl.captures.len() + args_regs.len();
                         let callable = ctx.get_callable(cl.name_id).ok_or_else(|| {
                             JitError::runtime(
                                 format!(
@@ -1230,11 +1280,13 @@ pub fn execute_bytecode(
                                 loc.as_error_pos(),
                             ));
                         };
-                        if total_args != func.params_count {
+                        // Arity check: captures sit before params in the register
+                        // file, so only compare caller-supplied args to param count.
+                        if args_regs.len() != func.params_count {
                             return Err(JitError::runtime(
                                 format!(
                                     "Closure arity mismatch: expected {}, got {}",
-                                    func.params_count, total_args
+                                    func.params_count, args_regs.len()
                                 ),
                                 loc.as_error_pos(),
                             ));
@@ -1253,7 +1305,7 @@ pub fn execute_bytecode(
                             registers: callee_regs,
                             pc: 0,
                             return_to: ret,
-                            obj_cache: Vec::with_capacity(4),
+                             obj_cache: Vec::new(),
                         });
                         continue;
                     }

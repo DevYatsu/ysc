@@ -1,0 +1,7 @@
+// Test kwargs parameter
+fun show_config(..kwargs) {
+  print("keys: " + str(kwargs |> len()))
+}
+
+show_config(name: "test", value: 42)
+show_config()

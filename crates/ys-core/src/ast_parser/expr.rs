@@ -636,14 +636,3 @@ pub(super) fn parse_pipe_rhs<'source>(
 // ---------------------------------------------------------------------------
 // String literal helper
 // ---------------------------------------------------------------------------
-
-#[allow(dead_code)]
-pub(super) fn expect_str<'source>(parser: &mut AstParser<'source>) -> Result<String, JitError> {
-    match parser.advance()? {
-        Token::String(s) => Ok(unescape_string(s)),
-        t => Err(JitError::parsing(
-            format!("Expected string, found {:?}", t),
-            parser.loc().as_error_pos(),
-        )),
-    }
-}

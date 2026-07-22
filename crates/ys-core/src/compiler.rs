@@ -547,6 +547,10 @@ pub struct UserFunction {
     pub locals_count: usize,
     /// Number of parameters the function accepts (used for arity checking).
     pub params_count: usize,
+    /// Index of the rest parameter (`.name`) that collects remaining positional args.
+    pub rest_at: Option<usize>,
+    /// Index of the kwargs parameter (`..name`) that collects remaining named args.
+    pub kwargs_at: Option<usize>,
 }
 
 //  Program

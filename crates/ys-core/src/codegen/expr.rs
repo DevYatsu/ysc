@@ -90,31 +90,61 @@ pub(super) fn compile_fun_call(
     loc: Loc,
 ) -> Result<usize, JitError> {
     // Resolve named arguments + defaults: map names to positions, fill defaults.
-    // We clone default expressions to avoid borrowing `cg.fn_params` past the
-    // resolution step — the later `cg.compile_node()` needs mutable access.
     let mut resolved: Vec<AstNode> = Vec::new();
-    if !named.is_empty() || cg.fn_params.contains_key(name) {
-        if let Some(params) = cg.fn_params.get(name).cloned() {
-            let pcount = params.len();
-            resolved = vec![AstNode::Nil(loc); pcount];
-            // Fill positional args
-            for (i, arg) in args.iter().enumerate().take(pcount) {
+    if let Some(params) = cg.fn_params.get(name).cloned() {
+        let pcount = params.len();
+        let rest_idx = params.iter().position(|p| p.is_rest);
+        let kwargs_idx = params.iter().position(|p| p.is_kwargs);
+
+        // Create slot for each declared param.  For rest params we skip the
+        // rest slot — the runtime's `apply_rest` builds the list from extra
+        // positional args directly, without a Nil placeholder in args_r.
+        resolved = vec![AstNode::Nil(loc); pcount];
+
+        // Fill positional args (one-to-one for declared params).
+        for (i, arg) in args.iter().enumerate().take(pcount) {
+            if Some(i) != rest_idx {
                 resolved[i] = arg.clone();
             }
-            // Fill named args by parameter name
-            for (n, val) in named {
-                if let Some(pos) = params.iter().position(|p| p.name == *n) {
+        }
+
+        // For rest params, append remaining positional args past pcount so
+        // the runtime can collect them into a list.
+        if rest_idx.is_some() {
+            for arg in args.iter().skip(pcount) {
+                resolved.push(arg.clone());
+            }
+        }
+
+        // Fill named args by parameter name.
+        for (n, val) in named {
+            if let Some(pos) = params.iter().position(|p| p.name == *n) {
+                if pos < resolved.len() {
                     resolved[pos] = val.clone();
                 }
             }
-            // Fill defaults for missing params
-            for (i, param) in params.iter().enumerate() {
-                match &resolved[i] {
-                    AstNode::Nil(_) if param.default.is_some() => {
-                        resolved[i] = *param.default.as_ref().unwrap().clone();
-                    }
-                    _ => {}
+        }
+
+        // Fill defaults for missing params (skip rest — it captures remaining).
+        for (i, param) in params.iter().enumerate() {
+            if param.is_rest { continue; }
+            if i >= resolved.len() || matches!(resolved[i], AstNode::Nil(_)) {
+                if let Some(ref default) = param.default {
+                    if i >= resolved.len() { resolved.resize(i + 1, AstNode::Nil(loc)); }
+                    resolved[i] = *default.clone();
                 }
+            }
+        }
+
+        // For kwargs, collect unmatched named args into an object.
+        if kwargs_idx.is_some() {
+            let extra_named: Vec<(String, AstNode)> = named
+                .iter()
+                .filter(|(n, _)| !params.iter().any(|p| p.name == **n && !p.is_kwargs))
+                .map(|(n, v)| (n.clone(), v.clone()))
+                .collect();
+            if kwargs_idx.unwrap() < resolved.len() {
+                resolved[kwargs_idx.unwrap()] = AstNode::ObjectLit(extra_named, loc);
             }
         }
     }

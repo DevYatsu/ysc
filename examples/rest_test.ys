@@ -1,0 +1,26 @@
+// Test rest parameter
+fun sum(.nums) {
+  total = 0
+  i = 0
+  while i < (nums |> len()) {
+    total = total + nums[i]
+    i = i + 1
+  }
+  ret total
+}
+
+print(sum(1, 2, 3, 4, 5))
+print(sum(10, 20))
+print(sum())
+
+// Test with non-rest + rest
+fun greet(greeting, .names) {
+  i = 0
+  while i < (names |> len()) {
+    print(greeting + ", " + names[i] + "!")
+    i = i + 1
+  }
+}
+
+greet("Hello", "Alice", "Bob", "Charlie")
+greet("Hi")

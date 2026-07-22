@@ -1,0 +1,27 @@
+// Cache decorator - captures `fn` and `_cache`
+fun cache(fn) {
+  _cache = []
+  ret |x| {
+    if (_cache |> len()) > x {
+      if _cache[x] != nil {
+        ret _cache[x]
+      }
+    }
+    result = fn(x)
+    while (_cache |> len()) <= x {
+      _cache |> push(nil)
+    }
+    _cache[x] = result
+    ret result
+  }
+}
+
+@cache
+fun fib(x) {
+  if x <= 1 { ret x }
+  ret fib(x - 1) + fib(x - 2)
+}
+
+print("fib(10) = " + str(fib(10)))
+print("fib(20) = " + str(fib(20)))
+print("fib(30) = " + str(fib(30)))

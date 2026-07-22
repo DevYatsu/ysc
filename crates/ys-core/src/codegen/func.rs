@@ -19,6 +19,8 @@ struct FuncFrame {
     locals: FxHashMap<String, VarInfo>,
     next_reg: usize,
     is_in_function: bool,
+    var_mask: u64,
+    freed_regs: Vec<usize>,
     saved_instrs: Vec<Instruction>,
 }
 
@@ -29,6 +31,8 @@ fn begin_function(cg: &mut Codegen, params: &[String]) -> FuncFrame {
         locals: std::mem::take(&mut cg.locals),
         next_reg: cg.next_reg,
         is_in_function: cg.is_in_function,
+        var_mask: cg.var_mask,
+        freed_regs: std::mem::take(&mut cg.freed_regs),
         saved_instrs: std::mem::take(&mut cg.instructions),
     };
     // Clear per-function state — the outer scope's register space must
@@ -53,7 +57,15 @@ fn begin_function(cg: &mut Codegen, params: &[String]) -> FuncFrame {
 
 /// Ensure the compiled body ends with a Return, then push the function into
 /// the program's function list and restore the parent compilation context.
-fn end_function(cg: &mut Codegen, name: &str, params_count: usize, frame: FuncFrame, loc: Loc) {
+fn end_function(
+    cg: &mut Codegen,
+    name: &str,
+    params_count: usize,
+    frame: FuncFrame,
+    loc: Loc,
+    rest_at: Option<usize>,
+    kwargs_at: Option<usize>,
+) {
     if !matches!(cg.instructions.last(), Some(Instruction::Return { .. })) {
         cg.emit(Instruction::Return { value: None, loc });
     }
@@ -64,6 +76,8 @@ fn end_function(cg: &mut Codegen, name: &str, params_count: usize, frame: FuncFr
     cg.locals = frame.locals;
     cg.next_reg = frame.next_reg;
     cg.is_in_function = frame.is_in_function;
+    cg.var_mask = frame.var_mask;
+    cg.freed_regs = frame.freed_regs;
 
     let idx = cg.functions.len();
     cg.functions.push(UserFunction {
@@ -71,6 +85,8 @@ fn end_function(cg: &mut Codegen, name: &str, params_count: usize, frame: FuncFr
         params_count,
         locals_count,
         instructions: Arc::from(func_body),
+        rest_at,
+        kwargs_at,
     });
     cg.function_map.insert(name.to_string(), idx);
 }
@@ -85,12 +101,14 @@ pub(super) fn compile_func(
     params: &[String],
     body: &[AstNode],
     loc: Loc,
+    rest_at: Option<usize>,
+    kwargs_at: Option<usize>,
 ) {
     let frame = begin_function(cg, params);
     if cg.compile_block(body).is_err() {
         cg.emit(Instruction::Return { value: None, loc });
     }
-    end_function(cg, name, params.len(), frame, loc);
+    end_function(cg, name, params.len(), frame, loc, rest_at, kwargs_at);
 }
 
 // ---------------------------------------------------------------------------
@@ -158,12 +176,197 @@ pub(super) fn compile_async_func(
         });
     }
 
-    end_function(cg, name, params.len(), frame, loc);
+    end_function(cg, name, params.len(), frame, loc, None, None);
 }
 
 // ---------------------------------------------------------------------------
 // Closure
 // ---------------------------------------------------------------------------
+
+/// Walk the closure body AST to find free variable references — names that
+/// reference variables from the enclosing scope rather than the closure's own
+/// parameters or locals.  The parent [`Codegen`] determines whether each name
+/// is a local (→ capture) or a global (→ skip, accessible via `LoadGlobal`).
+fn find_captures(body: &AstNode, closure_params: &[String], parent: &Codegen) -> Vec<String> {
+    let mut found: Vec<String> = Vec::new();
+    let bound: Vec<String> = closure_params.iter().cloned().collect();
+    walk_for_free_vars(body, &bound, &mut found);
+    // Filter: keep only names that are LOCALS in the parent scope.
+    found.retain(|name| {
+        parent
+            .get_var(name)
+            .is_some_and(|v| !v.is_global)
+    });
+    found
+}
+
+fn walk_for_free_vars(node: &AstNode, bound: &[String], found: &mut Vec<String>) {
+    match node {
+        // -- Leaf nodes that may reference a variable ------------------------
+        AstNode::Ident(name, _) => {
+            if !bound.contains(name) && !found.contains(name) {
+                found.push(name.clone());
+            }
+        }
+        AstNode::FunCall { name, args, named, .. } => {
+            // The function name might be a captured variable (e.g. `fn(x)`).
+            if !bound.contains(name) && !found.contains(name) {
+                found.push(name.clone());
+            }
+            for a in args {
+                walk_for_free_vars(a, bound, found);
+            }
+            for (_n, v) in named {
+                walk_for_free_vars(v, bound, found);
+            }
+        }
+        AstNode::DynamicCall { callee, args, named, .. } => {
+            walk_for_free_vars(callee, bound, found);
+            for a in args {
+                walk_for_free_vars(a, bound, found);
+            }
+            for (_n, v) in named {
+                walk_for_free_vars(v, bound, found);
+            }
+        }
+
+        // -- Variable-binding constructs (add to bound set then recurse) -----
+        AstNode::For { var, iter, body, .. } => {
+            walk_for_free_vars(iter, bound, found);
+            let mut b = bound.to_vec();
+            b.push(var.clone());
+            for stmt in body {
+                walk_for_free_vars(stmt, &b, found);
+            }
+        }
+        AstNode::FunDecl { name, params, body, .. } => {
+            let mut b = bound.to_vec();
+            b.push(name.clone());
+            for p in params {
+                b.push(p.name.clone());
+            }
+            for stmt in body {
+                walk_for_free_vars(stmt, &b, found);
+            }
+        }
+        AstNode::Closure { params, body, .. } => {
+            let mut b: Vec<String> = bound.to_vec();
+            for p in params {
+                b.push(p.name.clone());
+            }
+            walk_for_free_vars(body, &b, found);
+        }
+
+        // -- Assignments: target is being defined, value is read -------------
+        AstNode::Assign { target, value, .. } => {
+            // The value may reference free variables.
+            walk_for_free_vars(value, bound, found);
+            // The target (if an Ident) is being defined — add to bound set.
+            if let AstNode::Ident(name, _) = target.as_ref() {
+                let mut b = bound.to_vec();
+                b.push(name.clone());
+                // Also walk the value with the new binding if needed
+                // (already done above — value was walked with old bound set).
+            } else {
+                // For computed targets (index/field), walk them too.
+                walk_for_free_vars(target, bound, found);
+            }
+        }
+
+        // -- Composite expressions (recurse into children) -------------------
+        AstNode::Binary { lhs, rhs, .. } => {
+            walk_for_free_vars(lhs, bound, found);
+            walk_for_free_vars(rhs, bound, found);
+        }
+        AstNode::Unary { expr, .. } => walk_for_free_vars(expr, bound, found),
+        AstNode::Index { obj, index, .. } => {
+            walk_for_free_vars(obj, bound, found);
+            walk_for_free_vars(index, bound, found);
+        }
+        AstNode::Field { obj, .. } => walk_for_free_vars(obj, bound, found),
+        AstNode::Return { value: Some(v), .. } => walk_for_free_vars(v, bound, found),
+        AstNode::Return { value: None, .. } => {}
+        AstNode::Yield(expr, _) => walk_for_free_vars(expr, bound, found),
+        AstNode::Await(expr, _) => walk_for_free_vars(expr, bound, found),
+        AstNode::Splat(expr, _) => walk_for_free_vars(expr, bound, found),
+        AstNode::Range { start, end, step, .. } => {
+            walk_for_free_vars(start, bound, found);
+            walk_for_free_vars(end, bound, found);
+            if let Some(s) = step {
+                walk_for_free_vars(s, bound, found);
+            }
+        }
+        AstNode::ListLit(elems, _) => {
+            for e in elems {
+                walk_for_free_vars(e, bound, found);
+            }
+        }
+        AstNode::ListRepeat { val, count, .. } => {
+            walk_for_free_vars(val, bound, found);
+            walk_for_free_vars(count, bound, found);
+        }
+        AstNode::ObjectLit(fields, _) => {
+            for (_, v) in fields {
+                walk_for_free_vars(v, bound, found);
+            }
+        }
+        AstNode::If { cond, then_block, else_block, .. } => {
+            walk_for_free_vars(cond, bound, found);
+            for stmt in then_block {
+                walk_for_free_vars(stmt, bound, found);
+            }
+            for stmt in else_block {
+                walk_for_free_vars(stmt, bound, found);
+            }
+        }
+        AstNode::While { cond, body, .. } => {
+            walk_for_free_vars(cond, bound, found);
+            for stmt in body {
+                walk_for_free_vars(stmt, bound, found);
+            }
+        }
+        AstNode::Switch { expr, arms, .. } => {
+            walk_for_free_vars(expr, bound, found);
+            for arm in arms {
+                for pat in &arm.patterns {
+                    walk_for_free_vars(pat, bound, found);
+                }
+                for stmt in &arm.body {
+                    walk_for_free_vars(stmt, bound, found);
+                }
+            }
+        }
+        AstNode::Fallback { expr, default, .. } => {
+            walk_for_free_vars(expr, bound, found);
+            walk_for_free_vars(default, bound, found);
+        }
+        AstNode::Except { expr, arms, .. } => {
+            walk_for_free_vars(expr, bound, found);
+            for arm in arms {
+                for stmt in &arm.body {
+                    walk_for_free_vars(stmt, bound, found);
+                }
+            }
+        }
+        AstNode::Block(stmts, _) => {
+            for stmt in stmts {
+                walk_for_free_vars(stmt, bound, found);
+            }
+        }
+        AstNode::Decorator { name: _, args, inner, .. } => {
+            for a in args {
+                walk_for_free_vars(a, bound, found);
+            }
+            walk_for_free_vars(inner, bound, found);
+        }
+
+        // -- Literals and other leaf nodes (no variable references) ----------
+        AstNode::Number(..) | AstNode::Bool(..) | AstNode::Nil(..) | AstNode::Str(..)
+        | AstNode::Break(..) | AstNode::Fail { .. }
+        | AstNode::ErrorDecl { .. } | AstNode::ErrorEnum { .. } | AstNode::Use { .. }
+        | AstNode::AsyncFun { .. } | AstNode::Template { .. } => {}
+    }
+}
 
 pub(super) fn compile_closure(
     cg: &mut Codegen,
@@ -171,20 +374,45 @@ pub(super) fn compile_closure(
     body: &AstNode,
     loc: Loc,
 ) -> Result<usize, JitError> {
+    // 1. Detect captures: free variables in the body that are locals in the parent scope.
+    let capture_names: Vec<String> = find_captures(body, params, cg);
+
+    // 2. Build the closure's register layout: captures first, then params.
+    let capture_base = 0usize;
+    let params_base = capture_base + capture_names.len();
+
     let mut func = Codegen::new();
     func.closure_counter = cg.closure_counter;
     func.is_in_function = true;
+
+    // Register captures as locals (indices 0..captures.len()).
+    for (i, name) in capture_names.iter().enumerate() {
+        func.locals.insert(
+            name.clone(),
+            VarInfo { idx: i, is_global: false },
+        );
+        func.var_mask |= 1 << i;
+        func.next_reg = i + 1;
+    }
+    // Register params after captures.
     for (i, p) in params.iter().enumerate() {
+        let idx = params_base + i;
         func.locals.insert(
             p.clone(),
             VarInfo {
-                idx: i,
+                idx,
                 is_global: false,
             },
         );
-        func.next_reg = i + 1;
+        func.var_mask |= 1 << idx;
+        func.next_reg = idx + 1;
     }
-    let captures: Vec<String> = Vec::new();
+
+    // Copy parent scope metadata so decorated / global / named-arg resolution
+    // works inside the closure body.
+    func.globals = cg.globals.clone();
+    func.fn_params = cg.fn_params.clone();
+    func.decorated_fns = cg.decorated_fns.clone();
 
     let result_reg = func.compile_node(body).unwrap_or(0);
 
@@ -233,8 +461,11 @@ pub(super) fn compile_closure(
         params_count: params.len(),
         locals_count: func.next_reg,
         instructions: Arc::from(func.instructions),
+        rest_at: None,
+        kwargs_at: None,
     });
-    let capture_regs: Vec<usize> = captures
+    // Build capture register indices from the PARENT's register space.
+    let capture_regs: Vec<usize> = capture_names
         .iter()
         .filter_map(|name| cg.get_var(name).map(|v| v.idx))
         .collect();

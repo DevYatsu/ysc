@@ -13,10 +13,12 @@ parallel   = ["dep:rayon"]
 ## WASM-friendly build (no net/thread deps).  Use either:
 ##   cargo build -p ys-runtime --target wasm32-unknown-unknown --no-default-features
 ##   cargo build -p ys-runtime --target wasm32-unknown-unknown --features wasm
-wasm = []
+wasm = ["dep:wasm-bindgen", "dep:web-sys"]
 
 [dependencies]
 ys-core     = { path = "../ys-core" }
 rustc-hash  = "2.1.1"
 ureq        = { version = "3", optional = true }
 rayon       = { version = "1.11.0", optional = true }
+wasm-bindgen = { version = "0.2", optional = true, features = ["enable-interning"] }
+web-sys     = { version = "0.3", optional = true, features = ["Window", "XmlHttpRequest"] }

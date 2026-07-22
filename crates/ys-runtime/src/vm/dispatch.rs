@@ -7,6 +7,7 @@
 //! - [`CALL_LOC`] for annotating `print()` output with source locations.
 
 use crate::context::{Callable, Context, NativeCtx};
+use crate::heap::ManagedObject;
 use crate::vm::frame::{CallFrame, InstrPtr, ReturnTarget};
 use std::cell::{Cell, UnsafeCell};
 use std::sync::Arc;
@@ -54,7 +55,6 @@ pub fn build_call_registers(locals: usize, args_regs: &[usize], caller: &[Value]
     if let Some(mut regs) = with_reg_pool(|pool| pool.pop())
         && regs.len() == locals
     {
-        // Only zero registers that args don't overwrite
         let args = args_regs.len().min(locals);
         for (i, &r) in args_regs.iter().enumerate().take(args) {
             regs[i] = unsafe { *caller.get_unchecked(r) };
@@ -125,6 +125,26 @@ pub fn pool_regs(regs: Vec<Value>) {
     });
 }
 
+/// Apply rest-param logic after building the initial registers: collect
+/// remaining positional args into a `List` and store at `rest_at`.
+pub fn apply_rest(
+    ctx: &Context,
+    regs: &mut [Value],
+    args_regs: &[usize],
+    caller: &[Value],
+    rest_at: usize,
+) {
+    let rest_values: Vec<Value> = if rest_at < args_regs.len() {
+        args_regs[rest_at..]
+            .iter()
+            .map(|&r| unsafe { *caller.get_unchecked(r) })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    regs[rest_at] = ctx.alloc(ManagedObject::List(rest_values));
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 //  Call-location tracking
 // ─────────────────────────────────────────────────────────────────────────────
@@ -137,6 +157,12 @@ std::thread_local! {
 
 pub(crate) fn set_call_loc(line: u32, col: u32) {
     CALL_LOC.with(|loc| loc.set(Some((line, col))));
+}
+
+/// Read the call location set by the most recent [`set_call_loc`] call.
+/// Used by wasm32 `print()` to annotate output with source locations.
+pub(crate) fn get_call_loc() -> Option<(u32, u32)> {
+    CALL_LOC.with(|loc| loc.get())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -173,7 +199,9 @@ pub fn dispatch_callable(
             }
         }
         Callable::User(f) => {
-            if args_regs.len() != f.params_count {
+            let min_args = f.rest_at.unwrap_or(f.params_count);
+            if args_regs.len() < min_args || (f.rest_at.is_none() && args_regs.len() != f.params_count)
+            {
                 return Err(JitError::runtime(
                     format!(
                         "Function arity mismatch: expected {}, got {}",
@@ -184,8 +212,12 @@ pub fn dispatch_callable(
                 ));
             }
             let ret = dst.map(|d| ReturnTarget { dst: d });
-            let callee_regs =
+            let mut callee_regs =
                 build_call_registers(f.locals_count, args_regs, &frames[fi].registers);
+            // If there's a rest param, collect remaining args into a list.
+            if let Some(rest_at) = f.rest_at {
+                apply_rest(ctx, &mut callee_regs, args_regs, &frames[fi].registers, rest_at);
+            }
             frames.push(CallFrame {
                 instructions: InstrPtr::from_arc(&f.instructions),
                 func_name_id: None,

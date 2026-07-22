@@ -677,7 +677,9 @@ impl Codegen {
 
                 // Compile the function body
                 let pn: Vec<String> = params.iter().map(|p| p.name.clone()).collect();
-                func::compile_func(self, name, &pn, body, *loc);
+                let rest_at = params.iter().position(|p| p.is_rest);
+                let kwargs_at = params.iter().position(|p| p.is_kwargs);
+                func::compile_func(self, name, &pn, body, *loc, rest_at, kwargs_at);
 
                 // Infer error kind from collected fail calls
                 if !self.current_fail_kinds.is_empty() {
@@ -697,6 +699,9 @@ impl Codegen {
                     }
                 }
 
+                // Register function params for named argument resolution
+                self.fn_params.insert(name.clone(), params.clone());
+
                 // Restore outer state
                 self.current_error_kind = old_error_kind;
                 self.current_fail_kinds = old_fail_kinds;
@@ -710,8 +715,8 @@ impl Codegen {
                 loc,
             } => {
                 let pn: Vec<String> = params.iter().map(|p| p.name.clone()).collect();
-                func::compile_closure(self, &pn, body, *loc);
-                Ok(0)
+                let dst = func::compile_closure(self, &pn, body, *loc)?;
+                Ok(dst)
             },
 
             //  Collections

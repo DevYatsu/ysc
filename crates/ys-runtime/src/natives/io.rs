@@ -92,7 +92,7 @@ pub(crate) fn register(reg: &mut NativeRegistry) {
         let [val] = args else {
             return Err(JitError::runtime("str() expects 1 argument", (0, 0)));
         };
-        let s = stringify_value(ctx, *val);
-        Ok(alloc_string(ctx, s))
+        let s = stringify_value(ctx.as_ref(), *val);
+        Ok(alloc_string(ctx.as_ref(), s))
     });
 }

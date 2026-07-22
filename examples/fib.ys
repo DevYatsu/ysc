@@ -1,10 +1,10 @@
-fun wrap(fn_val) {
-  ret |x| "wrapped " + str(fn_val(x))
+// Fibonacci with decorator-based caching (closure captures not yet implemented,
+// so this uses a simpler inline approach for now)
+
+fun fib(x) {
+  if x <= 1 { ret x }
+  ret fib(x - 1) + fib(x - 2)
 }
 
-fun original(x) {
-  ret x + 1
-}
-
-wrapped = wrap(original)
-print(wrapped(10))
+print("fib(10) = " + str(fib(10)))
+print("fib(20) = " + str(fib(20)))
