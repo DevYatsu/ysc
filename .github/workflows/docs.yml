@@ -26,7 +26,7 @@ jobs:
 
       - name: Build WASM module
         run: |
-          cd ys-wasm
+          cd crates/ys-wasm
           curl -fsS https://rustwasm.github.io/wasm-pack/installer/init.sh | sh
           wasm-pack build --target web --no-default-features
 
@@ -35,7 +35,7 @@ jobs:
           mkdir -p deploy
           cp -r docs/* deploy/
           mkdir -p deploy/pkg
-          cp ys-wasm/pkg/* deploy/pkg/
+          cp crates/ys-wasm/pkg/* deploy/pkg/
           touch deploy/.nojekyll
           # echo "customdomain.com" > deploy/CNAME  # uncomment when you have a custom domain
 
